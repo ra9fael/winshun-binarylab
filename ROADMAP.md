@@ -6,9 +6,18 @@
   strict-sandbox C++ resident plugin. Three keywords (`bits`, `bytes`,
   `struct`), `preview.text` visualizations, three ordered actions, no window,
   no file writes, no network.
-- **v2 (planned, not implemented) — interactive bit editor.** This document is
-  the plan the user asked to record. Nothing here is code yet, and none of the
-  v2 behaviour is verified.
+- **v2 (0.2.0) — approved and started.** The user approved on 2026-11-05:
+  single plugin (not a split), a `bitsEnter` settings choice moves `openEditor`
+  to Enter, and the first text batch adds `reg` + `conv` + `crc`. Order:
+  spike → editor MVP → `reg` → field lanes → text UX polish → `conv`/`crc`.
+- **v2 spike — passed (2026-11-05).** `editor.h` creates a real window from
+  the `openEditor` action. Measured through the real host (`wsbench`,
+  WinShunPluginHost): process at integrity LOW, inside the job, window
+  created in ~10 ms, protocol round trip unaffected, clean shutdown with the
+  GUI thread joined in the destructor. Rendering verified by screenshot: bit
+  grid MSB-first with correct 0x05 pattern, base lines correct. Notes: the
+  runner strips the plugin's environment, so runtime feature flags cannot come
+  from env vars; `represent()` strings carry their own 0x/0b/0o prefixes.
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise
