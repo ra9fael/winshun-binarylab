@@ -1,0 +1,146 @@
+# Test Plan and Verification Record
+
+Status of this document: v1 (`0.1.0`) implementation and verification,
+2026-11-05. "Measured" means a command was actually run in this workspace;
+"not verified" means it still needs a human with the WinShun GUI.
+
+## L0 — Manifest / packaging
+
+| Check | Result |
+|---|---|
+| `$schema` points at `WinShun-plugins/schema/plugin.schema.json` | Measured: present in `plugin.json` |
+| `id` matches the folder name (`renfei.binarylab`), three-part version, MIT license | Measured |
+| `permissions: []`, `sandbox: strict`, `start: lazy`, `timeoutMs: 1500`, `memoryMB: 64`, `encoding: utf-8` | Measured |
+| Host accepts the manifest and resolves the native `runtime.program` | Measured: `wsbench` loaded `resident, 3 command(s)`; the host's `Manifest.cpp` is the authoritative parser |
+| Editor-side `$schema` validation via Python `jsonschema` | Not run: the module is unavailable offline in this workspace (`pip` found no distribution). The `$schema` key is present for editor use; host-side validation passed |
+| `winshun.h` is byte-identical to `WinShun/src/plugins-sdk/winshun.h` | Measured: both SHA-256 `9ab4079d…d1984` |
+| Package contains no venv, secrets or logs | Not verified: no `.wsplugin` package was produced yet |
+
+Note: `runtime.program` is a native exe. The community schema's whitelist does
+not allow it, so the community `python tools/check.py` path does not apply;
+this plugin is meant for an own-repository `.wsplugin` import.
+
+## L1 — Pure logic (`tests/test_logic.cpp`, 139 assertions)
+
+| Group | Cases | Result |
+|---|---|---|
+| `bits` normal | `0xA5 & 0x0F = 0x05`, `~`, `\|`, `^`, `<<`, `>>`, `rol`, `ror`, `u64` wide shifts, field `get/set/clear/toggle`, `@` reinterpretation, settings-derived width, chain text | Pass |
+| `bits` invalid / boundary | empty, whitespace, type only, `0x`, `0b102`, `0o8`, `u8 256`, `i8 -129`, `i8 128`, negative unsigned, `shift >= width`, bad op, wrong arity, bad field range, field value too wide, 16 KiB cap | Pass |
+| `bits` property | 512 pseudo-random `u64` values round-trip through the hex literal parser | Pass |
+| `bytes` normal | hex tokens, compact hex, separators and `0x`, bin 8-bit tokens, oct tokens, `u16le/be`, default endian, `u32le`, `f32le/be`, `f64le`, `i8` signed, trailing bytes, no complete word, hexdump layout | Pass |
+| `bytes` invalid | empty, no data, unknown format, odd hex, wrong bin width, oct above 377, bad digit, 4096-byte cap, 16 KiB cap | Pass |
+| `struct` hand-computed | natural / `pack=1` / `pack=4` frame, default pack from settings, union, arrays, named nested reference, inline nested, named inline nested, chain text, `static_assert`, byte map | Pass |
+| `struct` invalid | `int`, bitfield, pointer, duplicate member, empty struct, zero-length array, unknown type, forward reference, bad pack, truncated definition, oversized layout, 16 KiB cap | Pass |
+| `struct` compiler oracle | GCC/MinGW `#pragma pack(push, 1/2/4/8/16)` plus natural, nested struct and packed union: `sizeof`, `alignof`, `offsetof` compared against `evalStruct` | Pass |
+
+Command: `cmake --build build && build/tests/binarylab_tests.exe` →
+`binarylab logic tests: 139/139 passed`, exit 0.
+
+## L2 — Raw JSON-RPC (direct pipe, supplementary)
+
+A Python pipe drove `binarylab.exe` directly. This is **not** a substitute for
+the host round trip in L3; it only checks fields that `wsbench`'s lossy
+`itemToJson` printer omits.
+
+| Check | Result |
+|---|---|
+| `initialize` → `{protocolVersion:"1", name:"renfei.binarylab"}` | Measured |
+| `preview.text`, `icon`, `actions` are emitted on stdout | Measured: `color:#185FA5`, 3 actions in order `copyPrimary / copyDetail / chainQuery` with keys `Enter / Ctrl+Enter / Shift+Enter` |
+| Empty `text` → 3 `valid:false` help rows | Measured: `help.bits`, `help.bytes`, `help.struct` |
+| Invalid input → 1 `valid:false` error row | Measured: `error.E_BAD_LITERAL` |
+| `settingsChanged` takes effect on the next query | Measured: `defaultWidth=16` changed the result of `bits 0xFFFF` |
+| `defaultEndian=be` and `defaultPack=4` from `initialize` are honored | Measured |
+| `cancel` / `settingsChanged` notifications produce no stdout reply | Measured |
+| `shutdown` → `{"result":{}}`, process exits 0 | Measured |
+| stdout contains only JSON-RPC lines; diagnostics on stderr | Measured: stderr had only `cancel 2` and `settingsChanged` lines |
+| Effects for the three actions | Measured: `copy+notify+hide`, `copy+notify+hide`, `setQuery+keep` |
+
+## L3 — Real host round trip (`wsbench` + `WinShunPluginHost.exe`)
+
+Run from the built WinShun tree with the Qt runtime on `PATH`:
+
+```powershell
+$env:PATH = "D:\tools\Qt\6.12.0\msvc2022_64\bin;" + $env:PATH
+wsbench --plugin <plugin-dir> --query "bits u8 0xA5 & 0x0F" --runs 5
+```
+
+| Case | Result |
+|---|---|
+| `bits u8 0xA5 & 0x0F` | 5 rows, `0x05 / 0b00000101 / 0o005 / 5`, bit grid in `preview.text` |
+| `bytes hex u16le 34 12 78 56` | 4 rows, `0x1234 @0`, `0x5678 @2`, hexdump `34 12 78 56` |
+| `struct pack=4 struct Frame {…}` | 4 rows, `sizeof=16 align=4`, offsets `0/4/8/10`, byte map `A...BBBBCCDDD...`, `static_assert` text |
+| `bits ` (empty argument) | 3 invalid example rows with `autocomplete` |
+| `bits u8 0xGG` | 1 invalid `error.E_BAD_LITERAL` row |
+| `--setting defaultEndian=be` | `bytes hex u16 12 34` decoded as `u16be` → `0x1234` |
+| `--setting defaultWidth=8` | `bits 0xFF` → `0xFF / 0b11111111 / 0o377 / 255` |
+| `--setting defaultPack=1` | `struct struct S { u8 a; u32 b; };` → `sizeof=5 align=1` |
+| `--action copyDetail` | `effect copy`, `effect notify`, `effect hide` |
+| `--action chainQuery` | `effect setQuery bytes hex 05`, `effect keep` |
+| `--action copyPrimary` on a struct summary | `effect replace` (member rows), `effect keep` |
+| Sandbox | `integrity LOW (4096), elevated no, in a job yes` on every run |
+
+`--query "bits"` (no trailing space) is rejected by `wsbench` itself with
+`"bits" triggers no command of this plugin`; that is a bench harness rule, not
+a plugin failure. `--query "bits "` reaches the plugin and produces the empty
+state.
+
+## L4 — Performance
+
+| Input | Cold start | First round trip | Steady median | p95 |
+|---|---|---|---|---|
+| `bits u8 0xA5 & 0x0F` | 72.3 ms | 2.1 ms | 1.68 ms | 1.88 ms |
+| `bytes hex u16le 34 12 78 56` | 67.6 ms | — | — | — |
+| `bytes hex u8` + 4096 bytes (12,300 chars) | 132.2 ms | 62.5 ms | 65.18 ms | **81.26 ms** |
+
+The 4096-byte case initially measured ~413 ms p95 because the full per-word
+detail text was duplicated across result rows. Capping the copyable detail to
+64 words (while keeping the complete normalized bytes and full hexdump) brought
+it under the 100 ms target. The `timeoutMs` budget of 1500 ms is not
+approached.
+
+## L5 — Keyboard and failure injection (partly unverified)
+
+| Case | Result |
+|---|---|
+| All three commands reachable by keyword + text, no mouse required | Partly verified: the protocol exposes `autocomplete` and three ordered actions; GUI keyboard feel is unverified |
+| Enter / Ctrl+Enter / Shift+Enter | Verified at protocol level via `--action`; real key events unverified |
+| Fast typing / `cancel` while a query is in flight | Not verified: queries are synchronous and bounded, so the host discards stale `queryId`s; `wsbench` cannot interleave |
+| Missing exe, corrupt settings, no VC runtime, strict low integrity | Partly verified: LOW integrity confirmed; a missing exe and MSVC-runtime absence were not injected |
+| Network unavailable | N/A: no network calls exist |
+| No fabricated results on failure | Verified: error and trailing-byte rows are `valid:false` and carry no value |
+
+## Remaining work before calling it "done"
+
+1. Open WinShun, enable the plugin, turn on developer mode, and compare the
+   message log against the L2/L3 records (`initialize`, `query`, `action`,
+   `cancel`, `settingsChanged`, `shutdown`).
+2. Look at the real hover preview: `preview.text` is documented only as a
+   tooltip. Monospace font, preserved consecutive spaces, newlines and panel
+   height are **not** guaranteed. Mitigation is already in place: every key
+   number also appears in `title`, `subtitle`, `copy` and `data`, so the grid
+   is an enhancement, never the only channel.
+3. Build with MSVC to confirm `/utf-8` and the static-CRT path.
+4. Package a `.wsplugin` and import it into a fresh profile (installed-off by
+   default, permission confirmation on enable).
+5. Add fuzz/property tests driven from outside the C++ test binary, and a
+   real cancellation stress test with the GUI.
+
+## Honest notes / corrections
+
+- The earlier design example said `bytes oct 377 040 000 -> FF 40 00`. That
+  arithmetic was wrong: `0o40 = 32 = 0x20`. The implemented and tested result
+  is `FF 20 00`.
+- The design's `p95 < 100 ms` target was a goal, not a measurement. It is now
+  measured at 81.26 ms for the 4096-byte case after the optimization above.
+- The layout oracle is **GCC/MinGW `#pragma pack`**, not MSVC `/Zp`. MSVC was
+  not available in this workspace; MSVC ABI agreement is inferred from the
+  documented alignment rule, not measured.
+- `wsbench` prints items through `itemToJson`, which drops `icon`, `preview`
+  and `actions`. Those fields were confirmed on the raw protocol pipe (L2) and
+  are parsed by `WinShun/src/plugin/Items.cpp:138-153`; their absence in
+  `wsbench` output is a printer limitation, not a plugin failure.
+- PowerShell console capture in this environment renders Chinese text as
+  mojibake (OEM code page). Direct interactive output and the raw JSON pipe
+  showed correct UTF-8 Chinese, so this is a capture artifact.
+- `steamdb-plugin-design.md` in the workspace root and the modified
+  `WinShun/tests/CMakeLists.txt` predate this work and were left untouched.
