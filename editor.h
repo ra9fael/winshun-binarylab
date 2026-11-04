@@ -28,6 +28,7 @@
 // winshun::debug (stderr).
 
 #include "logic.h"
+#include "winshun.h"
 
 #include <windows.h>
 
@@ -475,8 +476,14 @@ void threadMain(EditorSpec spec)
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+        try {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        } catch (const std::exception& e) {
+            winshun::debug(std::string("renfei.binarylab: editor loop: ") + e.what());
+        } catch (...) {
+            winshun::debug("renfei.binarylab: editor loop: unknown exception");
+        }
     }
 
     std::lock_guard<std::mutex> lock(s.m);
@@ -537,8 +544,16 @@ void closeEditorAndWait(unsigned timeoutMs)
     }
     std::unique_lock<std::mutex> lock(s.m);
     const bool closed = s.cv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] { return !s.running; });
-    if (closed && s.worker.joinable())
+    if (closed && s.worker.joinable()) {
         s.worker.join();
+    } else if (!closed && s.worker.joinable()) {
+        // The window did not close in time (e.g. it was mid-clipboard or the
+        // host is tearing the process down). Detach rather than join: a joinable
+        // std::thread left in the static EditorState would call std::terminate()
+        // at program exit. The detached thread finishes its own cleanup.
+        s.worker.detach();
+        winshun::debug("renfei.binarylab: editor close timed out; detached");
+    }
 }
 
 } // namespace binlab
