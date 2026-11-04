@@ -44,6 +44,7 @@ struct EditorSpec {
     std::uint64_t value = 0;
     int width = 32;
     std::string caption; // the query text, shown as the window subtitle
+    bool zh = true;      // window language: Simplified Chinese or English
 };
 
 // True when the window is created and shown. On false, `error` says why
@@ -70,6 +71,7 @@ struct EditorState {
     std::uint64_t value = 0;
     int width = 32;
     std::string caption;
+    bool zh = true;
     int focusBit = -1;
     bool dragging = false;
     int dragPaint = 0; // 0/1 value painted during a drag
@@ -88,7 +90,10 @@ std::wstring wideFromUtf8(const std::string& text)
     const int n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
     std::wstring w(static_cast<std::size_t>(n > 0 ? n : 0), L'\0');
     if (n > 0)
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), n, w.data(), n);
+        // The source length is the BYTE count (text.size()), not the wide-char
+        // count n: passing n silently truncated every string containing CJK
+        // (n < bytes) at n bytes, leaving NULs that ended DrawTextW early.
+        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), w.data(), n);
     return w;
 }
 
@@ -130,7 +135,7 @@ struct Layout {
     int clientH = 0;
 };
 
-Layout layoutFor(int width)
+Layout layoutFor(int width, int minWidth = 420)
 {
     Layout l;
     l.colsPerRow = 8;
@@ -138,23 +143,58 @@ Layout layoutFor(int width)
     if (l.rows < 1)
         l.rows = 1;
     l.clientW = kMargin * 2 + l.colsPerRow * kCell;
-    if (l.clientW < 420) // the two value lines must fit without clipping
-        l.clientW = 420;
+    if (l.clientW < minWidth) // header text is measured, never guessed (threadMain)
+        l.clientW = minWidth;
     l.clientH = kHeaderH + l.rows * (kCellH + kLabelH + 8) + kMargin;
     return l;
 }
 
-HFONT makeFont(int height, bool bold)
+// The grid is centered in whatever client width the window ended up with.
+int gridLeft(int clientW, int cols)
+{
+    return (clientW - cols * kCell) / 2;
+}
+
+// Consolas has no CJK glyphs and GDI does not fall back per glyph, so any
+// string that can contain Chinese must use a CJK-capable face. The value lines
+// and the bit grid stay on Consolas (digits only) to keep monospace alignment.
+const wchar_t* uiFace(bool zh)
+{
+    return zh ? L"Microsoft YaHei UI" : L"Segoe UI";
+}
+
+HFONT makeFont(int height, bool bold, const wchar_t* face, DWORD pitchFamily)
 {
     return CreateFontW(-height, 0, 0, 0, bold ? FW_SEMIBOLD : FW_NORMAL, FALSE, FALSE, FALSE,
                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                       FIXED_PITCH | FF_MODERN, L"Consolas");
+                       pitchFamily, face);
+}
+
+HFONT monoFont(int height, bool bold)
+{
+    return makeFont(height, bold, L"Consolas", FIXED_PITCH | FF_MODERN);
+}
+
+HFONT uiFont(int height, bool bold, bool zh)
+{
+    return makeFont(height, bold, uiFace(zh), DEFAULT_PITCH | FF_DONTCARE);
 }
 
 void drawCenteredText(HDC dc, const RECT& rc, const std::wstring& text, COLORREF color)
 {
     SetTextColor(dc, color);
     DrawTextW(dc, text.c_str(), -1, const_cast<LPRECT>(&rc), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+int textWidth(HDC dc, HFONT font, const std::wstring& text)
+{
+    if (text.empty())
+        return 0;
+    HGDIOBJ old = SelectObject(dc, font);
+    SIZE sz {};
+    GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &sz);
+    SelectObject(dc, old);
+    return sz.cx;
 }
 
 // Bit index for a (row, col) cell, MSB first within each byte group.
@@ -181,16 +221,24 @@ void setBit(std::uint64_t& value, int width, int bit, int v)
 // Map a client point to a valid bit index, or -1 if outside the grid or on a
 // cell that exceeds the configured width (the top row is only partially filled
 // for widths that are not multiples of 8).
-int hitBit(int x, int y, int width)
+int clientWOf(HWND hwnd)
+{
+    RECT rc {};
+    GetClientRect(hwnd, &rc);
+    return rc.right;
+}
+
+int hitBit(int x, int y, int width, int clientW)
 {
     const Layout l = layoutFor(width);
+    const int gx = gridLeft(clientW, l.colsPerRow);
     for (int row = 0; row < l.rows; ++row) {
         const int cellTop = kHeaderH + row * (kCellH + kLabelH + 8);
         const int cellY = cellTop + kLabelH;
         if (y < cellY || y > cellY + kCellH)
             continue;
         for (int col = 0; col < l.colsPerRow; ++col) {
-            const int cellLeft = kMargin + col * kCell;
+            const int cellLeft = gx + col * kCell;
             if (x < cellLeft || x > cellLeft + kCell)
                 continue;
             const int bit = bitAt(l.rows, l.colsPerRow, row, col);
@@ -269,12 +317,29 @@ void paint(HWND hwnd)
     EditorState& s = state();
 
     // Header: caption, then the value in every base, a status line and a hint.
-    HFONT captionFont = makeFont(15, true);
-    HFONT valueFont = makeFont(14, false);
-    HFONT labelFont = makeFont(11, false);
+    // Fonts are split by content: Consolas only for digit-only lines, a
+    // CJK-capable UI face for everything that can contain Chinese.
+    HFONT captionFont = uiFont(15, true, s.zh);
+    HFONT valueFont = monoFont(14, false);
+    HFONT labelFont = monoFont(11, false);
+    HFONT statusFont = uiFont(11, false, s.zh);
     HGDIOBJ oldFont = SelectObject(mem, captionFont);
     RECT line { 0, 10, w, 32 };
-    drawCenteredText(mem, line, wideFromUtf8(s.caption.empty() ? "bit editor" : s.caption), kPanelText);
+    std::wstring cap = wideFromUtf8(s.caption.empty() ? (s.zh ? "位编辑器" : "bit editor") : s.caption);
+    {
+        const int maxCap = w - 2 * kMargin;
+        auto fits = [&](const std::wstring& t) {
+            SIZE sz {};
+            GetTextExtentPoint32W(mem, t.c_str(), static_cast<int>(t.size()), &sz);
+            return sz.cx <= maxCap;
+        };
+        if (!fits(cap)) {
+            while (cap.size() > 1 && !fits(cap + L"…"))
+                cap.resize(cap.size() - 1);
+            cap += L"…";
+        }
+    }
+    drawCenteredText(mem, line, cap, kPanelText);
 
     const binlab::Repr r = binlab::represent(s.value, s.width, false);
     SelectObject(mem, valueFont);
@@ -285,23 +350,29 @@ void paint(HWND hwnd)
     line = { 0, 60, w, 82 };
     drawCenteredText(mem, line, wideFromUtf8(bases2), kValueText);
 
-    SelectObject(mem, labelFont);
-    const std::string status = "width " + std::to_string(s.width) + " bit"
-                             + (s.focusBit >= 0 ? "  ·  focus bit " + std::to_string(s.focusBit) : "");
+    SelectObject(mem, statusFont);
+    const std::string status = s.zh
+        ? "位宽 " + std::to_string(s.width) + " bit"
+              + (s.focusBit >= 0 ? " · 焦点位 " + std::to_string(s.focusBit) : "")
+        : std::to_string(s.width) + "-bit"
+              + (s.focusBit >= 0 ? " · focus bit " + std::to_string(s.focusBit) : "");
     line = { 0, 84, w, 100 };
     drawCenteredText(mem, line, wideFromUtf8(status), kLabelText);
     line = { 0, 104, w, 120 };
     drawCenteredText(mem, line,
-                     wideFromUtf8("点击翻转 · 拖动涂抹 · ←↑↓→ 移 · 空格翻转"),
+                     wideFromUtf8(s.zh ? "点击翻转 · 拖动涂抹 · 方向键移动焦点 · 空格翻转"
+                                       : "Click to toggle · drag to paint · arrows move focus · Space toggles"),
                      kLabelText);
     line = { 0, 122, w, 138 };
     drawCenteredText(mem, line,
-                     wideFromUtf8("Ctrl+C/B/D/O 复制 · Esc 关"),
+                     wideFromUtf8(s.zh ? "Ctrl+C/B/D/O 复制 HEX/BIN/DEC/OCT · Esc 关闭"
+                                       : "Ctrl+C/B/D/O copy HEX/BIN/DEC/OCT · Esc closes"),
                      kLabelText);
 
     // Bit grid: MSB on the left of each byte group, bit 0 at the right end.
-    HFONT cellFont = makeFont(15, false);
+    HFONT cellFont = monoFont(15, false);
     const Layout l = layoutFor(s.width);
+    const int gx = gridLeft(w, l.colsPerRow);
     int y = kHeaderH;
     for (int row = 0; row < l.rows; ++row) {
         const int cellTop = y;
@@ -311,7 +382,7 @@ void paint(HWND hwnd)
             const int bit = bitAt(l.rows, l.colsPerRow, row, col);
             if (bit >= s.width)
                 continue;
-            RECT cell { kMargin + col * kCell, cellTop, kMargin + (col + 1) * kCell, cellTop + kLabelH };
+            RECT cell { gx + col * kCell, cellTop, gx + (col + 1) * kCell, cellTop + kLabelH };
             drawCenteredText(mem, cell, std::to_wstring(bit), kLabelText);
         }
         SelectObject(mem, cellFont);
@@ -320,7 +391,7 @@ void paint(HWND hwnd)
             if (bit >= s.width)
                 continue;
             const bool on = getBit(s.value, bit) != 0;
-            RECT cell { kMargin + col * kCell, cellTop + kLabelH, kMargin + (col + 1) * kCell - 4,
+            RECT cell { gx + col * kCell, cellTop + kLabelH, gx + (col + 1) * kCell - 4,
                         cellTop + kLabelH + kCellH };
             HBRUSH fill = CreateSolidBrush(on ? kBitOn : kBitOff);
             FillRect(mem, &cell, fill);
@@ -345,6 +416,7 @@ void paint(HWND hwnd)
     SelectObject(mem, oldFont);
     SelectObject(mem, oldBmp);
     DeleteObject(cellFont);
+    DeleteObject(statusFont);
     DeleteObject(labelFont);
     DeleteObject(valueFont);
     DeleteObject(captionFont);
@@ -363,7 +435,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 1;
     case WM_LBUTTONDOWN: {
         EditorState& s = state();
-        const int bit = hitBit(static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)), s.width);
+        const int bit = hitBit(static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)), s.width, clientWOf(hwnd));
         if (bit >= 0) {
             s.focusBit = bit;
             s.dragPaint = getBit(s.value, bit) ? 0 : 1;
@@ -376,7 +448,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEMOVE: {
         EditorState& s = state();
         if (s.dragging) {
-            const int bit = hitBit(static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)), s.width);
+            const int bit = hitBit(static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)), s.width, clientWOf(hwnd));
             if (bit >= 0)
                 setBit(s.value, s.width, bit, s.dragPaint);
             InvalidateRect(hwnd, nullptr, TRUE);
@@ -439,6 +511,7 @@ void threadMain(EditorSpec spec)
     s.value = spec.value;
     s.width = spec.width;
     s.caption = spec.caption;
+    s.zh = spec.zh;
     s.focusBit = -1;
     s.dragging = false;
 
@@ -451,10 +524,43 @@ void threadMain(EditorSpec spec)
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassW(&wc); // ERROR_CLASS_ALREADY_EXISTS is fine; the class matches
 
-    const Layout l = layoutFor(spec.width);
+    // Size the window from the worst-case rendered header text, never guessed.
+    // The value lines can only grow to the full width, so measure an all-ones
+    // pattern; the status line is measured with the focus suffix included.
+    const std::string hint1 = spec.zh ? "点击翻转 · 拖动涂抹 · 方向键移动焦点 · 空格翻转"
+                                      : "Click to toggle · drag to paint · arrows move focus · Space toggles";
+    const std::string hint2 = spec.zh ? "Ctrl+C/B/D/O 复制 HEX/BIN/DEC/OCT · Esc 关闭"
+                                      : "Ctrl+C/B/D/O copy HEX/BIN/DEC/OCT · Esc closes";
+    const std::string status0 = spec.zh ? "位宽 " + std::to_string(spec.width) + " bit · 焦点位 63"
+                                        : std::to_string(spec.width) + "-bit · focus bit 63";
+    const std::string bases1 = "HEX 0x" + std::string((spec.width + 3) / 4, 'F')
+                             + "   OCT 0o" + std::string((spec.width + 2) / 3, '7');
+    const std::string bases2 = "BIN 0b" + std::string(spec.width, '1')
+                             + "   DEC " + std::string(spec.width > 32 ? 20 : 10, '9');
+    int minW = 420;
+    {
+        HDC dc = GetDC(nullptr);
+        HFONT tf = uiFont(11, false, spec.zh);
+        HFONT vf = monoFont(14, false);
+        for (const std::string* t : { &hint1, &hint2, &status0 }) {
+            const int need = textWidth(dc, tf, wideFromUtf8(*t)) + 2 * kMargin;
+            if (need > minW)
+                minW = need;
+        }
+        for (const std::string* t : { &bases1, &bases2 }) {
+            const int need = textWidth(dc, vf, wideFromUtf8(*t)) + 2 * kMargin;
+            if (need > minW)
+                minW = need;
+        }
+        DeleteObject(tf);
+        DeleteObject(vf);
+        ReleaseDC(nullptr, dc);
+    }
+
+    const Layout l = layoutFor(spec.width, minW);
     RECT rc { 0, 0, l.clientW, l.clientH };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX), FALSE);
-    const std::wstring title = wideFromUtf8("Binary Lab"); // the caption carries the expression
+    const std::wstring title = spec.zh ? L"二进制工作台" : L"Binary Lab"; // the caption carries the expression
 
     HWND hwnd = CreateWindowExW(0, kClassName, title.c_str(), WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX),
                                 CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top,

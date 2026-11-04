@@ -467,6 +467,7 @@ struct BinaryLab : winshun::Plugin {
             if (spec.width <= 0 || spec.width > 64)
                 spec.width = 32;
             spec.caption = a.text.empty() ? d["primary"].toString() : a.text;
+            spec.zh = zh;
             std::string error;
             if (!binlab::openEditorWindow(spec, error)) {
                 winshun::debug("renfei.binarylab: editor window failed: " + error);
