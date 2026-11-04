@@ -53,31 +53,40 @@ std::string tr(bool zh, const char* chinese, const char* english)
     return zh ? chinese : english;
 }
 
-// The order of this array is the keyboard mapping (Enter, Ctrl+Enter,
-// Shift+Enter). `key` is display text only and does not decide the mapping.
-// With the editor first (the bitsEnter=editor setting) every later action
-// shifts one key down; the last action then has no key of its own ("" display),
-// so the host shows it only through its menu. Which surface that is exactly is
-// not documented and still to be verified in the real UI.
-std::vector<winshun::Action> rowActions(bool zh, bool expandOnEnter, bool editorFirst)
+// Keyboard mapping. The host binds the displayed keys in array order:
+//   [0] Enter, [1] Ctrl+Enter, [2] Shift+Enter, and a 4th action with an empty
+//   key string is shown only through the host's action menu (no hotkey).
+//
+// For bits rows the editor is available, so `allowEditor` is true and copy and
+// openEditor share Enter / Ctrl+Enter as chosen by `editorFirst`:
+//   editorFirst=false (default, bitsEnter=copy): Enter=copy, Ctrl+Enter=editor
+//   editorFirst=true  (bitsEnter=editor):        Enter=editor, Ctrl+Enter=copy
+// chainQuery stays on Shift+Enter; copyDetail is the unbound menu action.
+// For bytes/struct rows there is no editor, so `allowEditor` is false and the
+// classic copy / copyDetail / chain mapping is used.
+std::vector<winshun::Action> rowActions(bool zh, bool expandOnEnter, bool editorFirst, bool allowEditor)
 {
     const std::string openTitle = tr(zh, "打开交互编辑器", "Open interactive editor");
-    if (editorFirst) {
-        return {
-            {"openEditor", openTitle, "Enter"},
-            {"copyPrimary", expandOnEnter ? tr(zh, "展开成员", "Expand members")
-                                          : tr(zh, "复制主值", "Copy value"), "Ctrl+Enter"},
-            {"copyDetail", tr(zh, "复制完整明细", "Copy full details"), "Shift+Enter"},
-            {"chainQuery", tr(zh, "改写为下一步查询", "Chain follow-up query"), ""},
-        };
+    const std::string copyTitle = expandOnEnter ? tr(zh, "展开成员", "Expand members")
+                                                : tr(zh, "复制主值", "Copy value");
+    const std::string detailTitle = tr(zh, "复制完整明细", "Copy full details");
+    const std::string chainTitle = tr(zh, "改写为下一步查询", "Chain follow-up query");
+    std::vector<winshun::Action> a;
+    if (allowEditor && editorFirst) {
+        a.push_back({"openEditor", openTitle, "Enter"});
+        a.push_back({"copyPrimary", copyTitle, "Ctrl+Enter"});
+        a.push_back({"chainQuery", chainTitle, "Shift+Enter"});
+        a.push_back({"copyDetail", detailTitle, ""});
+    } else if (allowEditor) {
+        a.push_back({"copyPrimary", copyTitle, "Enter"});
+        a.push_back({"openEditor", openTitle, "Ctrl+Enter"});
+        a.push_back({"chainQuery", chainTitle, "Shift+Enter"});
+        a.push_back({"copyDetail", detailTitle, ""});
+    } else {
+        a.push_back({"copyPrimary", copyTitle, "Enter"});
+        a.push_back({"copyDetail", detailTitle, "Ctrl+Enter"});
+        a.push_back({"chainQuery", chainTitle, "Shift+Enter"});
     }
-    std::vector<winshun::Action> a = {
-        {"copyPrimary", expandOnEnter ? tr(zh, "展开成员", "Expand members")
-                                      : tr(zh, "复制主值", "Copy value"), "Enter"},
-        {"copyDetail", tr(zh, "复制完整明细", "Copy full details"), "Ctrl+Enter"},
-        {"chainQuery", tr(zh, "改写为下一步查询", "Chain follow-up query"), "Shift+Enter"},
-    };
-    a.push_back({"openEditor", openTitle, ""}); // unbound: reachable from the host's action menu
     return a;
 }
 
@@ -95,14 +104,15 @@ winshun::Item makeRow(const std::string& id,
                       const std::string& kind,
                       const winshun::Json& members = winshun::Json(),
                       bool editorFirst = false,
-                      const winshun::Json& extra = winshun::Json())
+                      const winshun::Json& extra = winshun::Json(),
+                      bool allowEditor = false)
 {
     winshun::Item item(id, title, subtitle);
     item.withCopy(primary)
         .withPreview(preview)
         .withIcon(icon)
         .withScore(score)
-        .withActions(rowActions(zh, expandOnEnter, editorFirst));
+        .withActions(rowActions(zh, expandOnEnter, editorFirst, allowEditor));
     winshun::Json::Object data {
         {"kind", kind},
         {"primary", primary},
@@ -209,27 +219,27 @@ winshun::Items bitsItems(const binlab::BitsEval& e, bool zh, bool editorOnEnter)
     winshun::Items items;
     items.push_back(makeRow("bits.result.hex", r.hex + tr(zh, " · 十六进制", " · HEX"), context,
                             r.hex, e.detail, e.chain, e.preview, icon, 100, zh, false, "bits",
-                            winshun::Json(), editorOnEnter, extra));
+                            winshun::Json(), editorOnEnter, extra, true));
     items.push_back(makeRow("bits.result.bin", r.bin + tr(zh, " · 二进制", " · BIN"),
                             e.typeName + " · " + std::to_string(e.width) + " bit · " + binlab::binGrouped(e.result, e.width),
                             r.bin, e.detail, e.chain, e.preview, icon, 98, zh, false, "bits",
-                            winshun::Json(), editorOnEnter, extra));
+                            winshun::Json(), editorOnEnter, extra, true));
     items.push_back(makeRow("bits.result.oct", r.oct + tr(zh, " · 八进制", " · OCT"), context,
                             r.oct, e.detail, e.chain, e.preview, icon, 96, zh, false, "bits",
-                            winshun::Json(), editorOnEnter, extra));
+                            winshun::Json(), editorOnEnter, extra, true));
     items.push_back(makeRow("bits.result.dec", r.dec + tr(zh, " · 十进制", " · DEC"),
                             e.signedType ? e.typeName + " · signed" : e.typeName + " · unsigned",
                             r.dec, e.detail, e.chain, e.preview, icon, 95, zh, false, "bits",
-                            winshun::Json(), editorOnEnter, extra));
+                            winshun::Json(), editorOnEnter, extra, true));
     if (e.signedType)
         items.push_back(makeRow("bits.result.unsigned", r.unsignedDec + tr(zh, " · 无符号", " · unsigned"),
                                 std::string("@") + r.hex + tr(zh, " 按位模式重解释", " reinterpreted as a bit pattern"),
                                 r.unsignedDec, e.detail, e.chain, e.preview, icon, 94, zh, false, "bits",
-                                winshun::Json(), editorOnEnter, extra));
+                                winshun::Json(), editorOnEnter, extra, true));
     items.push_back(makeRow("bits.result.grid", tr(zh, "位网格与计算说明", "Bit grid and operation notes"),
                             tr(zh, "Ctrl+Enter 复制完整文本；Shift+Enter 把结果当字节流", "Ctrl+Enter copies the text; Shift+Enter chains into bytes"),
                             e.preview, e.detail, e.chain, e.preview, "color:#7C3AED", 90, zh, false, "bits",
-                            winshun::Json(), editorOnEnter, extra));
+                            winshun::Json(), editorOnEnter, extra, true));
     return items;
 }
 
@@ -360,7 +370,7 @@ winshun::Items memberItems(const winshun::Json& data, bool zh)
             .withPreview(m["preview"].toString())
             .withIcon(m["valid"].toBool(true) ? "color:#185FA5" : "color:#B45309")
             .withScore(80)
-            .withActions(rowActions(zh, false, false));
+            .withActions(rowActions(zh, false, false, false));
         if (!m["valid"].toBool(true))
             item.invalid();
         item.withData(winshun::Json(winshun::Json::Object {

@@ -46,8 +46,8 @@
     {
       "key": "bitsEnter",
       "type": "choice",
-      "title": {"zh": "Enter 行为", "en": "Enter key behavior"},
-      "hint": {"zh": "选“打开交互编辑器”时，bits 结果行按 Enter 进入位编辑窗口", "en": "When set, Enter on a bits row opens the interactive bit editor"},
+      "title": {"zh": "复制 / 编辑器 快捷键", "en": "Copy / editor shortcut"},
+      "hint": {"zh": "默认 Enter=复制主值，Ctrl+Enter=打开交互编辑器；选“打开交互编辑器”则两者互换", "en": "Default Enter=copy, Ctrl+Enter=open editor; choose the other to swap them"},
       "default": "copy",
       "options": ["copy", "editor"]
     }
