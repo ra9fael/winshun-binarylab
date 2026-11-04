@@ -12,10 +12,10 @@
     "mode": "resident",
     "program": "binarylab.exe",
     "sandbox": "strict",
-    "start": "lazy",
+    "start": "eager",
     "timeoutMs": 1500,
-    "memoryMB": 64,
-    "idleExitSec": 600,
+    "memoryMB": 128,
+    "idleExitSec": 0,
     "encoding": "utf-8"
   },
   "settings": [
