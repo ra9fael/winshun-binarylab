@@ -2,12 +2,10 @@
 
 A WinShun resident plugin for embedded work: parse `hex` / `bin` / `oct` strings,
 visualize bit operations, and compute C-like struct layout. Everything is a
-bounded, pure in-memory computation. It is a **text-based** plugin: grids,
-hexdumps and layout maps are rendered by the host's result list and
-`preview.text`, not by a window owned by the plugin.
-
-> The interactive bit editor is a planned v2 feature, not part of v1. See
-> [ROADMAP.md](ROADMAP.md).
+bounded, pure in-memory computation. The result rows and `preview.text` are
+rendered by the host, and the optional **interactive bit editor** opens its own
+window (only when you trigger it) so you can click bits, drag-paint, and copy
+the edited value in any base.
 
 ## Commands
 
@@ -67,14 +65,37 @@ are ABI-dependent and would produce a confidently wrong answer.
 
 ## Actions
 
-The three actions are declared in this order; **order**, not the `key` string,
-decides the keyboard mapping.
+Actions are declared in a fixed order; **order**, not the `key` string, decides
+the keyboard mapping. For `bits` rows the editor is available, so `copyPrimary`
+and `openEditor` share Enter / Ctrl+Enter and `copyDetail` is reached from the
+host's action menu. The split is chosen by the `bitsEnter` setting.
 
-| Key | Action | Effect |
-|---|---|---|
-| Enter | `copyPrimary` | Copy the row's main value. On a `struct` summary row it instead expands into one row per member/padding via `effects.replace`. |
-| Ctrl+Enter | `copyDetail` | Copy the full detail text (bit grid, hexdump, layout + `static_assert`). |
-| Shift+Enter | `chainQuery` | Put a follow-up query in the input box via `effects.setQuery` and keep the window open. |
+| Command | Enter | Ctrl+Enter | Shift+Enter | Menu (no key) |
+|---|---|---|---|---|
+| `bits` (default `bitsEnter=copy`) | `copyPrimary` — copy the row's main value | `openEditor` — open the interactive bit editor | `chainQuery` — fill the input box with a follow-up | `copyDetail` — copy full text |
+| `bits` (`bitsEnter=editor`) | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
+| `bytes` / `struct` | `copyPrimary` (struct summary expands members) | `copyDetail` | `chainQuery` | — |
+
+On a `struct` summary row Enter expands into one row per member/padding via
+`effects.replace` instead of copying.
+
+### Interactive bit editor
+
+Triggered from a `bits` result row (Ctrl+Enter by default, or Enter when
+`bitsEnter=editor`). The window is owned by the plugin and runs under the same
+strict sandbox as the rest of the plugin. Inside it:
+
+| Input | Effect |
+|---|---|
+| Click a bit cell | Toggle that bit |
+| Drag across cells | Paint them to the value of the first cell |
+| Arrow keys | Move the focus cell (Left/Right ±1, Up/Down ±8); the focused cell shows a yellow border |
+| Space | Toggle the focused bit |
+| Ctrl+C / B / D / O | Copy the value as HEX / BIN / DEC / OCT to the clipboard |
+| Esc | Close |
+
+The header shows the four bases live as you edit. The window lives on its own GUI
+thread; WinShun tears it down through the plugin destructor on shutdown.
 
 Queries have no side effects: they never delete files, start programs, change
 the clipboard, or open a window. Copy and `setQuery` effects are returned only
@@ -90,6 +111,7 @@ example.
 | `defaultWidth` | choice | `32` | Width for `bits` when no type is written |
 | `defaultEndian` | choice | `le` | Endianness for types without an explicit `le` / `be` |
 | `defaultPack` | choice | `0` | `pack` for `struct` when `pack=N` is omitted |
+| `bitsEnter` | choice | `copy` | Which of copy / editor takes Enter on `bits` rows. `copy` (default) = Enter copies, Ctrl+Enter opens the editor; `editor` swaps them. |
 
 Settings are read from `initialize` and refreshed on `settingsChanged`; no
 secrets are involved.

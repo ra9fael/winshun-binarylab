@@ -18,6 +18,18 @@
   grid MSB-first with correct 0x05 pattern, base lines correct. Notes: the
   runner strips the plugin's environment, so runtime feature flags cannot come
   from env vars; `represent()` strings carry their own 0x/0b/0o prefixes.
+- **v2 editor MVP — implemented (2026-11-05).** The window is now interactive:
+  click a cell toggles its bit, dragging paints cells to the first cell's value,
+  arrow keys move a focus cell (yellow border), Space toggles the focused bit,
+  Ctrl+C / B / D / O copy the value as HEX / BIN / DEC / OCT, Esc closes. The
+  four-base header updates live. Also fixed the shortcut mapping: `bits` rows
+  default to **Enter = copy, Ctrl+Enter = open editor** (configurable via the
+  `bitsEnter` setting; `editor` swaps them), with `copyDetail` on the host's
+  action menu. Verified by driving the plugin over JSON-RPC and screenshotting
+  the window: a simulated click on bit 7 turned `0x05` into `0x85`, the bit-7
+  cell showed `1` with the focus border. (Clipboard write from inside the window
+  still needs a real-host confirmation; the sandbox permits the native call but
+  it was not exercised in the headless driver.)
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise
