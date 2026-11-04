@@ -9,8 +9,10 @@
 // the host's locale (Chinese by default, English when locale starts with "en").
 #include "winshun.h"
 
+#include "editor.h"
 #include "logic.h"
 
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +23,7 @@ struct Settings {
     int defaultWidth = 32;
     std::string defaultEndian = "le";
     int defaultPack = 0;
+    bool editorOnEnter = false;
 };
 
 Settings readSettings(const winshun::Json& s)
@@ -41,6 +44,7 @@ Settings readSettings(const winshun::Json& s)
     const std::string pack = text("defaultPack", "0");
     if (pack == "1" || pack == "2" || pack == "4" || pack == "8" || pack == "16")
         st.defaultPack = std::stoi(pack);
+    st.editorOnEnter = binlab::lower(text("bitsEnter", "copy")) == "editor";
     return st;
 }
 
@@ -51,14 +55,30 @@ std::string tr(bool zh, const char* chinese, const char* english)
 
 // The order of this array is the keyboard mapping (Enter, Ctrl+Enter,
 // Shift+Enter). `key` is display text only and does not decide the mapping.
-std::vector<winshun::Action> rowActions(bool zh, bool expandOnEnter)
+// With the editor first (the bitsEnter=editor setting) every later action
+// shifts one key down; the last action then has no key of its own ("" display),
+// so the host shows it only through its menu. Which surface that is exactly is
+// not documented and still to be verified in the real UI.
+std::vector<winshun::Action> rowActions(bool zh, bool expandOnEnter, bool editorFirst)
 {
-    return {
+    const std::string openTitle = tr(zh, "打开交互编辑器", "Open interactive editor");
+    if (editorFirst) {
+        return {
+            {"openEditor", openTitle, "Enter"},
+            {"copyPrimary", expandOnEnter ? tr(zh, "展开成员", "Expand members")
+                                          : tr(zh, "复制主值", "Copy value"), "Ctrl+Enter"},
+            {"copyDetail", tr(zh, "复制完整明细", "Copy full details"), "Shift+Enter"},
+            {"chainQuery", tr(zh, "改写为下一步查询", "Chain follow-up query"), ""},
+        };
+    }
+    std::vector<winshun::Action> a = {
         {"copyPrimary", expandOnEnter ? tr(zh, "展开成员", "Expand members")
                                       : tr(zh, "复制主值", "Copy value"), "Enter"},
         {"copyDetail", tr(zh, "复制完整明细", "Copy full details"), "Ctrl+Enter"},
         {"chainQuery", tr(zh, "改写为下一步查询", "Chain follow-up query"), "Shift+Enter"},
     };
+    a.push_back({"openEditor", openTitle, ""}); // unbound: reachable from the host's action menu
+    return a;
 }
 
 winshun::Item makeRow(const std::string& id,
@@ -73,14 +93,16 @@ winshun::Item makeRow(const std::string& id,
                       bool zh,
                       bool expandOnEnter,
                       const std::string& kind,
-                      const winshun::Json& members = winshun::Json())
+                      const winshun::Json& members = winshun::Json(),
+                      bool editorFirst = false,
+                      const winshun::Json& extra = winshun::Json())
 {
     winshun::Item item(id, title, subtitle);
     item.withCopy(primary)
         .withPreview(preview)
         .withIcon(icon)
         .withScore(score)
-        .withActions(rowActions(zh, expandOnEnter));
+        .withActions(rowActions(zh, expandOnEnter, editorFirst));
     winshun::Json::Object data {
         {"kind", kind},
         {"primary", primary},
@@ -90,6 +112,8 @@ winshun::Item makeRow(const std::string& id,
     };
     if (members.isArray())
         data["members"] = members;
+    for (const auto& kv : extra.toObject())
+        data[kv.first] = kv.second;
     item.withData(winshun::Json(std::move(data)));
     return item;
 }
@@ -170,29 +194,42 @@ winshun::Items helpItems(const std::string& command, bool zh)
     return items;
 }
 
-winshun::Items bitsItems(const binlab::BitsEval& e, bool zh)
+winshun::Items bitsItems(const binlab::BitsEval& e, bool zh, bool editorOnEnter)
 {
     const binlab::Repr r = binlab::represent(e.result, e.width, e.signedType);
     const std::string context = e.typeName + " · " + e.expr;
     const std::string icon = "color:#185FA5";
+    // The editor opens from these fields; the action must not re-parse the text.
+    // hexUpper without a prefix would lose the pattern for width < 64, so store
+    // the raw 64-bit pattern and mask in the window instead.
+    const winshun::Json extra(winshun::Json::Object {
+        {"valueHex", binlab::hexUpper(e.result, 64)},
+        {"width", e.width},
+    });
     winshun::Items items;
     items.push_back(makeRow("bits.result.hex", r.hex + tr(zh, " · 十六进制", " · HEX"), context,
-                            r.hex, e.detail, e.chain, e.preview, icon, 100, zh, false, "bits"));
+                            r.hex, e.detail, e.chain, e.preview, icon, 100, zh, false, "bits",
+                            winshun::Json(), editorOnEnter, extra));
     items.push_back(makeRow("bits.result.bin", r.bin + tr(zh, " · 二进制", " · BIN"),
                             e.typeName + " · " + std::to_string(e.width) + " bit · " + binlab::binGrouped(e.result, e.width),
-                            r.bin, e.detail, e.chain, e.preview, icon, 98, zh, false, "bits"));
+                            r.bin, e.detail, e.chain, e.preview, icon, 98, zh, false, "bits",
+                            winshun::Json(), editorOnEnter, extra));
     items.push_back(makeRow("bits.result.oct", r.oct + tr(zh, " · 八进制", " · OCT"), context,
-                            r.oct, e.detail, e.chain, e.preview, icon, 96, zh, false, "bits"));
+                            r.oct, e.detail, e.chain, e.preview, icon, 96, zh, false, "bits",
+                            winshun::Json(), editorOnEnter, extra));
     items.push_back(makeRow("bits.result.dec", r.dec + tr(zh, " · 十进制", " · DEC"),
                             e.signedType ? e.typeName + " · signed" : e.typeName + " · unsigned",
-                            r.dec, e.detail, e.chain, e.preview, icon, 95, zh, false, "bits"));
+                            r.dec, e.detail, e.chain, e.preview, icon, 95, zh, false, "bits",
+                            winshun::Json(), editorOnEnter, extra));
     if (e.signedType)
         items.push_back(makeRow("bits.result.unsigned", r.unsignedDec + tr(zh, " · 无符号", " · unsigned"),
                                 std::string("@") + r.hex + tr(zh, " 按位模式重解释", " reinterpreted as a bit pattern"),
-                                r.unsignedDec, e.detail, e.chain, e.preview, icon, 94, zh, false, "bits"));
+                                r.unsignedDec, e.detail, e.chain, e.preview, icon, 94, zh, false, "bits",
+                                winshun::Json(), editorOnEnter, extra));
     items.push_back(makeRow("bits.result.grid", tr(zh, "位网格与计算说明", "Bit grid and operation notes"),
                             tr(zh, "Ctrl+Enter 复制完整文本；Shift+Enter 把结果当字节流", "Ctrl+Enter copies the text; Shift+Enter chains into bytes"),
-                            e.preview, e.detail, e.chain, e.preview, "color:#7C3AED", 90, zh, false, "bits"));
+                            e.preview, e.detail, e.chain, e.preview, "color:#7C3AED", 90, zh, false, "bits",
+                            winshun::Json(), editorOnEnter, extra));
     return items;
 }
 
@@ -323,7 +360,7 @@ winshun::Items memberItems(const winshun::Json& data, bool zh)
             .withPreview(m["preview"].toString())
             .withIcon(m["valid"].toBool(true) ? "color:#185FA5" : "color:#B45309")
             .withScore(80)
-            .withActions(rowActions(zh, false));
+            .withActions(rowActions(zh, false, false));
         if (!m["valid"].toBool(true))
             item.invalid();
         item.withData(winshun::Json(winshun::Json::Object {
@@ -340,6 +377,13 @@ winshun::Items memberItems(const winshun::Json& data, bool zh)
 
 struct BinaryLab : winshun::Plugin {
     std::string name() const override { return "renfei.binarylab"; }
+
+    // Cleanup runs after serve() has returned: close the editor window and
+    // join its thread so the process exits with no UI thread left behind.
+    ~BinaryLab() override
+    {
+        binlab::closeEditorAndWait(1500);
+    }
 
     winshun::Items query(const winshun::Query& q) override
     {
@@ -371,7 +415,7 @@ struct BinaryLab : winshun::Plugin {
         winshun::Items items;
         if (command == "bits") {
             const auto r = binlab::evalBits(text, st.defaultWidth, false);
-            items = r.success ? bitsItems(r.value, zh)
+            items = r.success ? bitsItems(r.value, zh, st.editorOnEnter)
                               : winshun::Items {makeError(r.failure, zh)};
         } else if (command == "bytes") {
             const auto r = binlab::evalBytes(text, st.defaultEndian);
@@ -405,6 +449,24 @@ struct BinaryLab : winshun::Plugin {
                                       ? data["chain"].toString()
                                       : a.text;
         const bool zh = chinese();
+        if (a.action == "openEditor") {
+            const winshun::Json d = a.item["data"];
+            binlab::EditorSpec spec;
+            spec.value = std::strtoull(d["valueHex"].toString().c_str(), nullptr, 16);
+            spec.width = static_cast<int>(d["width"].toInt(32));
+            if (spec.width <= 0 || spec.width > 64)
+                spec.width = 32;
+            spec.caption = a.text.empty() ? d["primary"].toString() : a.text;
+            std::string error;
+            if (!binlab::openEditorWindow(spec, error)) {
+                winshun::debug("renfei.binarylab: editor window failed: " + error);
+                return {winshun::effect::notify(tr(zh, "无法打开编辑器窗口：", "Could not open the editor window: ") + error),
+                        winshun::effect::hide()};
+            }
+            winshun::debug("renfei.binarylab: editor window opened");
+            return {winshun::effect::notify(tr(zh, "交互编辑器已打开（Esc 关闭）", "Interactive editor opened (Esc closes)")),
+                    winshun::effect::hide()};
+        }
         if (a.action == "copyDetail")
             return {winshun::effect::copy(detail),
                     winshun::effect::notify(tr(zh, "已复制完整明细", "Copied full details")),

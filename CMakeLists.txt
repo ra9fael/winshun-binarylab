@@ -9,6 +9,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # because plugin.json names it as runtime.program. Keep that convention.
 add_executable(binarylab main.cpp)
 target_compile_definitions(binarylab PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+# The v2 editor window: user32 (windows, DPI) and gdi32 (painting).
+target_link_libraries(binarylab PRIVATE user32 gdi32)
 
 if(MSVC)
     target_compile_options(binarylab PRIVATE /utf-8 /W4 /permissive-)

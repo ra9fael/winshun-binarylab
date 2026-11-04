@@ -96,17 +96,20 @@ secrets are involved.
 
 ## Permissions and data
 
-`permissions` is empty and `runtime.sandbox` is `strict`. Measured with
-`wsbench`: the plugin process runs at **LOW integrity, not elevated, inside a
-job object**. No `ui`, `network`, `files:*`, `clipboard:*`, `processes`,
-`notifications`, `elevated`, `contentSearch`, `ai.expose` or `hostHotkeys`
-capability is declared.
+`runtime.sandbox` is `strict`. Measured with `wsbench`: the plugin process runs
+at **LOW integrity, not elevated, inside a job object**. Since 0.2.0 the
+manifest declares two permissions, both required by the interactive bit editor
+and nothing else:
 
-Rationale: the host already renders the result list, hover preview, right-click
-menu, and copy actions. `ui` controls a plugin opening its own windows, finding
-other windows, and switching foreground windows — none of which v1 needs. A
-`copy` effect is a host-mediated action, so it does not require
-`clipboard:write`.
+| Permission | Why | Enforceable? |
+|---|---|---|
+| `ui` | The editor window (created only when the user triggers the `openEditor` action). | Partially — without it the job blocks desktop/USER handles, so the window could not exist. |
+| `clipboard:write` | The editor's copy button writes the edited value directly. The protocol has no plugin→host copy tool, so a host-mediated `copy` effect is not available from inside a window. | Yes. |
+
+Text-only use needs neither: queries and all other actions keep zero side
+effects (no files, no clipboard, no window). No `network`, `files:*`,
+`clipboard:read`, `processes`, `notifications`, `elevated`, `contentSearch`,
+`ai.expose` or `hostHotkeys` capability is declared.
 
 The plugin writes nothing to disk and does not use `WS_DATA_DIR`. If presets
 are added later, they belong in `WS_DATA_DIR` with atomic writes. Secrets must
