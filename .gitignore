@@ -1,0 +1,12 @@
+# Build output is never committed or packaged into .wsplugin.
+build/
+CMakeFiles/
+*.obj
+*.pdb
+*.ilk
+
+# binarylab.exe is a build artifact (CMake writes it to the source dir,
+# because plugin.json names it as runtime.program). It is distributed as a
+# GitHub release asset (.wsplugin / zip), not through git. A fresh clone
+# rebuilds it with CMake; see README.
+binarylab.exe

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LingCore/WinShun-plugins/main/schema/plugin.schema.json",
+  "manifest": 1,
+  "id": "renfei.binarylab",
+  "name": {"zh": "二进制工作台", "en": "Binary Lab"},
+  "version": "0.1.0",
+  "description": "纯内存计算的嵌入式二进制工具：位运算与进制转换、hex/bin/oct 字节流解码、C 风格结构体排布。",
+  "author": "renfei",
+  "license": "MIT",
+  "permissions": [],
+  "runtime": {
+    "mode": "resident",
+    "program": "binarylab.exe",
+    "sandbox": "strict",
+    "start": "lazy",
+    "timeoutMs": 1500,
+    "memoryMB": 64,
+    "idleExitSec": 600,
+    "encoding": "utf-8"
+  },
+  "settings": [
+    {
+      "key": "defaultWidth",
+      "type": "choice",
+      "title": {"zh": "默认位宽", "en": "Default bit width"},
+      "hint": {"zh": "bits 命令未显式写类型时使用", "en": "Used when bits does not name a type"},
+      "default": "32",
+      "options": ["8", "16", "32", "64"]
+    },
+    {
+      "key": "defaultEndian",
+      "type": "choice",
+      "title": {"zh": "默认字节序", "en": "Default endianness"},
+      "hint": {"zh": "u16/u32/u64/f32/f64 不带 le/be 后缀时使用", "en": "Used when a type has no le/be suffix"},
+      "default": "le",
+      "options": ["le", "be"]
+    },
+    {
+      "key": "defaultPack",
+      "type": "choice",
+      "title": {"zh": "默认 pack", "en": "Default pack"},
+      "hint": {"zh": "struct 命令未写 pack=N 时使用；0 表示自然对齐", "en": "Used when struct omits pack=N; 0 means natural alignment"},
+      "default": "0",
+      "options": ["0", "1", "2", "4", "8", "16"]
+    }
+  ],
+  "commands": [
+    {
+      "id": "bits",
+      "keyword": "bits",
+      "title": {"zh": "位运算 / 进制转换", "en": "Bit operations / bases"},
+      "hint": {"zh": "例如 bits u8 0xA5 & 0x0F", "en": "e.g. bits u8 0xA5 & 0x0F"},
+      "actions": [
+        {"id": "copyPrimary", "title": {"zh": "复制主值", "en": "Copy value"}, "key": "Enter"},
+        {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": "Ctrl+Enter"},
+        {"id": "chainQuery", "title": {"zh": "改写为下一步查询", "en": "Chain follow-up query"}, "key": "Shift+Enter"}
+      ]
+    },
+    {
+      "id": "bytes",
+      "keyword": "bytes",
+      "title": {"zh": "字节流解析", "en": "Byte stream parsing"},
+      "hint": {"zh": "例如 bytes hex u16le 34 12 78 56", "en": "e.g. bytes hex u16le 34 12 78 56"},
+      "actions": [
+        {"id": "copyPrimary", "title": {"zh": "复制主值", "en": "Copy value"}, "key": "Enter"},
+        {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": "Ctrl+Enter"},
+        {"id": "chainQuery", "title": {"zh": "改写为下一步查询", "en": "Chain follow-up query"}, "key": "Shift+Enter"}
+      ]
+    },
+    {
+      "id": "struct",
+      "keyword": "struct",
+      "title": {"zh": "结构体空间排布", "en": "Struct layout"},
+      "hint": {"zh": "例如 struct pack=4 struct Frame { u8 sof; u32 seq; };", "en": "e.g. struct pack=4 struct Frame { u8 sof; u32 seq; };"},
+      "actions": [
+        {"id": "copyPrimary", "title": {"zh": "展开成员", "en": "Expand members"}, "key": "Enter"},
+        {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": "Ctrl+Enter"},
+        {"id": "chainQuery", "title": {"zh": "切换 pack 对比", "en": "Compare with another pack"}, "key": "Shift+Enter"}
+      ]
+    }
+  ]
+}

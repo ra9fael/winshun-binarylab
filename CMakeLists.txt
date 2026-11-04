@@ -1,0 +1,42 @@
+cmake_minimum_required(VERSION 3.21)
+project(binarylab LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# The generated C++ template builds the exe straight into the plugin folder,
+# because plugin.json names it as runtime.program. Keep that convention.
+add_executable(binarylab main.cpp)
+target_compile_definitions(binarylab PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+if(MSVC)
+    target_compile_options(binarylab PRIVATE /utf-8 /W4 /permissive-)
+    # Static CRT: the exe needs no runtime DLL, which the strict sandbox cannot load.
+    set_target_properties(binarylab PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+else()
+    target_compile_options(binarylab PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8 -Wall -Wextra -O2)
+    target_link_options(binarylab PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
+
+set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}")
+endforeach()
+
+# Pure-logic tests: logic.h has no OS dependency, so they build and run on any
+# C++17 compiler without starting a plugin process.
+add_executable(binarylab_tests tests/test_logic.cpp)
+target_include_directories(binarylab_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_compile_options(binarylab_tests PRIVATE /utf-8 /W4 /permissive-)
+else()
+    target_compile_options(binarylab_tests PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8 -Wall -Wextra -O2)
+endif()
+set_target_properties(binarylab_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(binarylab_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests")
+endforeach()
+
+enable_testing()
+add_test(NAME binarylab_logic COMMAND binarylab_tests)
