@@ -34,6 +34,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -63,6 +64,7 @@ struct EditorSpec {
     std::string hostEndian = "le";
     int hostPack = 0;
     std::string hostBitsEnter = "copy";
+    std::string dataDir;           // host dataDir; history.jsonl lives here
 };
 
 bool openEditorWindow(const EditorSpec& spec, std::string& error);
@@ -73,6 +75,17 @@ namespace detail {
 
 constexpr int kTimerId = 1;
 constexpr DWORD kMsgFadeMs = 2000;
+constexpr int kEditH = 20;          // single-line EDIT; 24px left 9px of dead space
+constexpr int kHistBtnW = 34;       // expression history dropdown button
+constexpr int kHistRows = 12;       // visible entries in the dropdown
+constexpr int kHistRowH = 24;
+constexpr int kMaxHistory = 200;    // capped, adjacent duplicates removed
+
+struct HistoryEntry {
+    std::string expr;
+    std::string result;
+    std::string type;
+};
 
 struct EditorState {
     std::mutex m;
@@ -130,6 +143,24 @@ struct EditorState {
     int panelBottom = 0;
     int panelCol2 = 0;         // left edge of the right column
     bool suppressEval = false; // set while the toolbar rewrites the type prefix
+
+    // Float result: `value` holds the IEEE-754 bit pattern and the DEC chip
+    // shows floatText instead of the pattern's integer value.
+    bool isFloat = false;
+    std::string floatText;
+    std::string unitNote;
+
+    // Expression history. A dropdown, not a sixth tab: history is an input
+    // assistant and must stay usable while the bit grid is visible.
+    std::string dataDir;
+    std::vector<HistoryEntry> history;
+    bool historyPersistent = true;
+    int historyPos = -1;       // -1 = not browsing
+    bool historyOpen = false;
+    std::string histDraft;     // text typed before browsing back in time
+    RECT rcHistoryBtn = {};
+    RECT rcHistoryItem[kHistRows] = {};
+    RECT rcClearHistory = {};
 };
 
 EditorState& state()
@@ -161,6 +192,156 @@ std::string utf8FromWide(const std::wstring& w)
     if (n > 0)
         WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
     return s;
+}
+
+// ---- expression history persistence ----------------------------------------
+// JSONL, one append per submitted expression. A missing file is normal on the
+// first run; an unwritable dataDir (strict sandbox) degrades to session-only.
+
+std::string jsonEscape(const std::string& s)
+{
+    std::string out;
+    for (unsigned char c : s) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else if (c < 0x20) continue; // control characters cannot come from a single-line EDIT
+        else out += static_cast<char>(c);
+    }
+    return out;
+}
+
+std::string jsonField(const std::string& line, const std::string& key)
+{
+    const std::string pat = "\"" + key + "\":\"";
+    const std::size_t a = line.find(pat);
+    if (a == std::string::npos)
+        return {};
+    std::size_t i = a + pat.size();
+    std::string out;
+    while (i < line.size() && line[i] != '"') {
+        if (line[i] == '\\' && i + 1 < line.size()) {
+            ++i;
+            switch (line[i]) {
+            case 'n': out += '\n'; break;
+            case 'r': out += '\r'; break;
+            case 't': out += '\t'; break;
+            default: out += line[i]; break;
+            }
+        } else {
+            out += line[i];
+        }
+        ++i;
+    }
+    return out;
+}
+
+std::string historyPath()
+{
+    EditorState& s = state();
+    if (s.dataDir.empty())
+        return {};
+    std::string p = s.dataDir;
+    if (p.back() != '/' && p.back() != '\\')
+        p += '\\';
+    return p + "history.jsonl";
+}
+
+bool readHistoryFile(std::string& out)
+{
+    const std::string path = historyPath();
+    if (path.empty())
+        return false;
+    HANDLE h = CreateFileW(wideFromUtf8(path).c_str(), GENERIC_READ, FILE_SHARE_READ,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return false;
+    out.clear();
+    char buf[4096];
+    DWORD got = 0;
+    while (ReadFile(h, buf, sizeof buf, &got, nullptr) && got > 0)
+        out.append(buf, static_cast<std::size_t>(got));
+    CloseHandle(h);
+    return true;
+}
+
+bool writeHistoryLine(const std::string& line, bool truncate)
+{
+    const std::string path = historyPath();
+    if (path.empty())
+        return false;
+    HANDLE h = CreateFileW(wideFromUtf8(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                           nullptr, truncate ? CREATE_ALWAYS : OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return false;
+    if (!truncate)
+        SetFilePointer(h, 0, nullptr, FILE_END);
+    DWORD written = 0;
+    const BOOL ok = WriteFile(h, line.data(), static_cast<DWORD>(line.size()), &written, nullptr);
+    CloseHandle(h);
+    return ok && written == line.size();
+}
+
+void loadHistory()
+{
+    EditorState& s = state();
+    s.history.clear();
+    s.historyPersistent = !s.dataDir.empty();
+    std::string text;
+    if (!readHistoryFile(text))
+        return; // no file yet: the first successful submit creates it
+    std::size_t a = 0;
+    while (a < text.size()) {
+        const std::size_t b = text.find('\n', a);
+        const std::string line = text.substr(a, (b == std::string::npos ? text.size() : b) - a);
+        a = b == std::string::npos ? text.size() : b + 1;
+        if (line.empty() || line.size() > 2048)
+            continue;
+        HistoryEntry e { jsonField(line, "expr"), jsonField(line, "result"), jsonField(line, "type") };
+        if (!e.expr.empty())
+            s.history.push_back(std::move(e));
+        if (s.history.size() >= kMaxHistory)
+            break;
+    }
+}
+
+void appendHistoryFile(const HistoryEntry& e)
+{
+    EditorState& s = state();
+    if (!s.historyPersistent)
+        return;
+    const std::string line = "{\"expr\":\"" + jsonEscape(e.expr) + "\",\"result\":\""
+                           + jsonEscape(e.result) + "\",\"type\":\"" + jsonEscape(e.type) + "\"}\n";
+    if (writeHistoryLine(line, false)) {
+        winshun::debug("ra9fael.binarylab: history append expr=" + e.expr);
+    } else {
+        s.historyPersistent = false;
+        winshun::debug("ra9fael.binarylab: history is session-only (dataDir is not writable)");
+    }
+}
+
+void clearHistory()
+{
+    EditorState& s = state();
+    s.history.clear();
+    s.historyPos = -1;
+    s.historyOpen = false;
+    if (s.historyPersistent && !writeHistoryLine(std::string(), true))
+        s.historyPersistent = false;
+    winshun::debug("ra9fael.binarylab: history cleared");
+}
+
+// "4Mi = 4 x 2^20 = 4194304" -> "4Mi -> 4194304" for the narrow status slot.
+std::string compactNote(const std::string& note)
+{
+    const std::size_t first = note.find(" = ");
+    const std::size_t last = note.rfind(" = ");
+    if (first == std::string::npos || last == first)
+        return note;
+    return note.substr(0, first) + " -> " + note.substr(last + 3);
 }
 
 void ensureDpiAwareness()
@@ -313,6 +494,17 @@ std::string parityDefinition(int i, bool zh)
         "odd-bit: append it to make the 1 count odd",
     };
     return zh ? kZh[i] : kEn[i];
+}
+
+// Sign / exponent / mantissa colour for the float bit-grid band.
+COLORREF floatSegColor(int bit, int width)
+{
+    if (bit == width - 1)
+        return RGB(190, 130, 240); // S
+    const int exponentLow = width == 64 ? 52 : 23;
+    if (bit >= exponentLow)
+        return RGB(88, 166, 255);  // E
+    return RGB(127, 209, 168);     // M
 }
 
 int getBit(std::uint64_t value, int bit)
@@ -490,6 +682,7 @@ void computeLayout(HDC dc)
             r = {};
         for (RECT& r : s.rcSetSign)
             r = {};
+        s.rcClearHistory = {};
     } else {
         // All non-bits tabs share one fixed content height, so switching
         // between them never produces a small resize jitter.
@@ -505,9 +698,22 @@ void computeLayout(HDC dc)
         for (int i = 0; i < 2; ++i)
             s.rcSetSign[i] = { bx + i * 48, rowTop + kPanelRowH + 2,
                                bx + i * 48 + 44, rowTop + 2 * kPanelRowH - 2 };
+        s.rcClearHistory = { 16, rowTop + 5 * kPanelRowH + 2,
+                             16 + 132, rowTop + 6 * kPanelRowH - 2 };
     }
     s.clientH = std::max(s.clientH, kMinClientH);
-    s.rcExpr = { 64, kTopH + (kExprH - 24) / 2, s.clientW - 12, kTopH + (kExprH + 24) / 2 };
+    s.rcExpr = { 64, kTopH + (kExprH - kEditH) / 2,
+                 s.clientW - 12 - kHistBtnW - 6, kTopH + (kExprH + kEditH) / 2 };
+    s.rcHistoryBtn = { s.rcExpr.right + 6, s.rcExpr.top, s.clientW - 12, s.rcExpr.bottom };
+    {
+        // Full-width panel: a narrow right-aligned dropdown would cut through
+        // the middle of a result chip and leave half of its text visible.
+        const int hw = s.clientW - 24;
+        const int hx = 12;
+        const int hy = s.rcExpr.bottom + 4;
+        for (int i = 0; i < kHistRows; ++i)
+            s.rcHistoryItem[i] = { hx, hy + i * kHistRowH, hx + hw, hy + (i + 1) * kHistRowH };
+    }
 
     // Status row 2: four equal chips spanning the full client width.
     const int pcGap = 6;
@@ -555,8 +761,15 @@ void logLayout()
         for (int i = 0; i < 4; ++i)
             line += " parity" + std::to_string(i) + "=" + rectStr(s.rcParity[i]);
     }
-    line += " setw0=" + rectStr(s.rcSetWidth[0])
-          + " setsgn1=" + rectStr(s.rcSetSign[1]);
+    line += " expr=" + rectStr(s.rcExpr)
+          + " histBtn=" + rectStr(s.rcHistoryBtn)
+          + " hist0=" + rectStr(s.rcHistoryItem[0])
+          + " clearHist=" + rectStr(s.rcClearHistory)
+          + " setw0=" + rectStr(s.rcSetWidth[0])
+          + " setsgn1=" + rectStr(s.rcSetSign[1])
+          + " float=" + std::to_string(s.isFloat ? 1 : 0)
+          + " histCount=" + std::to_string(s.history.size())
+          + " histPersist=" + std::to_string(s.historyPersistent ? 1 : 0);
     winshun::debug(line);
 }
 
@@ -641,8 +854,14 @@ std::string baseText(char which)
     case 'H': return r.hex;
     case 'O': return r.oct;
     case 'B': return r.bin;
-    case 'D': return r.dec;
-    case 'A': return "HEX " + r.hex + "\nOCT " + r.oct + "\nBIN " + r.bin + "\nDEC " + r.dec;
+    case 'D': return s.isFloat ? s.floatText : r.dec;
+    case 'A': {
+        std::string out = "HEX " + r.hex + "\nOCT " + r.oct + "\nBIN " + r.bin + "\n";
+        out += s.isFloat ? "FLOAT " + s.floatText : "DEC " + r.dec;
+        if (!s.unitNote.empty())
+            out += "\nunit " + s.unitNote;
+        return out;
+    }
     default: return r.hex;
     }
 }
@@ -688,6 +907,93 @@ void parityValues(std::string out[4])
     out[3] = even ? "1" : "0"; // bit to append for an odd number of ones
 }
 
+void evaluate(); // defined below; commit/history helpers force a re-run
+
+std::string expressionText()
+{
+    EditorState& s = state();
+    if (!s.edit)
+        return {};
+    const int len = GetWindowTextLengthW(s.edit);
+    std::wstring w(static_cast<std::size_t>(len > 0 ? len : 0), L'\0');
+    if (len > 0)
+        GetWindowTextW(s.edit, w.data(), len + 1);
+    return binlab::trim(utf8FromWide(w));
+}
+
+// Enter = submit: force one re-evaluation, then record a CONFIRMED expression.
+// Live EN_CHANGE evaluation stays in place, so typing never needs Enter; the
+// history therefore contains intentional expressions, not every keystroke.
+void submitHistory(HWND hwnd)
+{
+    EditorState& s = state();
+    const std::string expr = expressionText();
+    if (expr.empty() || !s.evalError.empty()) {
+        s.msg = s.zh ? "表达式无效，未记入历史" : "invalid expression, not saved";
+        s.msgTick = GetTickCount();
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return;
+    }
+    if (s.history.empty() || s.history.back().expr != expr) {
+        const binlab::Repr r = binlab::represent(s.value, s.width, s.isSigned);
+        HistoryEntry e { expr, s.isFloat ? s.floatText : r.hex,
+                         binlab::typeNameFor(s.width, s.isSigned) };
+        s.history.push_back(e);
+        if (s.history.size() > kMaxHistory)
+            s.history.erase(s.history.begin());
+        appendHistoryFile(e);
+    }
+    s.historyPos = -1;
+    s.historyOpen = false;
+    s.msg = s.zh ? "已提交 · 记入历史" : "submitted · saved to history";
+    s.msgTick = GetTickCount();
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+void commitExpression(HWND hwnd)
+{
+    EditorState& s = state();
+    s.suppressEval = false;
+    evaluate();
+    submitHistory(hwnd);
+    winshun::debug("ra9fael.binarylab: commit expr=" + expressionText());
+}
+
+// Up/Down browse submitted history; returning past the newest entry restores
+// whatever was typed before browsing began.
+void historyStep(HWND hwnd, bool up)
+{
+    EditorState& s = state();
+    if (s.history.empty() || !s.edit)
+        return;
+    if (s.historyPos < 0) {
+        if (!up)
+            return;
+        s.histDraft = expressionText();
+        s.historyPos = static_cast<int>(s.history.size()) - 1;
+    } else if (up) {
+        if (s.historyPos > 0)
+            --s.historyPos;
+    } else {
+        if (s.historyPos + 1 < static_cast<int>(s.history.size())) {
+            ++s.historyPos;
+        } else {
+            s.historyPos = -1;
+            s.suppressEval = true;
+            SetWindowTextW(s.edit, wideFromUtf8(s.histDraft).c_str());
+            s.suppressEval = false;
+            evaluate();
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return;
+        }
+    }
+    const std::string& text = s.history[static_cast<std::size_t>(s.historyPos)].expr;
+    SetWindowTextW(s.edit, wideFromUtf8(text).c_str());
+    SendMessageW(s.edit, 0x00B1 /* EM_SETSEL */, static_cast<WPARAM>(text.size()),
+                 static_cast<LPARAM>(text.size()));
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
 // Re-evaluate the expression line. Keep the last good value on a parse error
 // and surface the failure in the status bar instead of blanking the window.
 void evaluate()
@@ -708,6 +1014,11 @@ void evaluate()
     if (r.success) {
         s.evalError.clear();
         s.value = r.value.result;
+        // A float literal makes HEX/OCT/BIN show its IEEE-754 bit pattern and
+        // the DEC chip show the decoded decimal text instead.
+        s.isFloat = r.value.isFloat;
+        s.floatText = r.value.floatText;
+        s.unitNote = r.value.unitNote;
         // An explicit type prefix inside the expression updates the settings
         // too, so the status bar always names the type actually on display.
         if (r.value.width != s.width || r.value.signedType != s.isSigned) {
@@ -718,6 +1029,9 @@ void evaluate()
         }
     } else {
         s.evalError = r.failure.code + ": " + r.failure.message;
+        s.isFloat = false;
+        s.floatText.clear();
+        s.unitNote.clear();
         // The status bar shows this string verbatim; log it so the drive
         // script can assert that no character is trimmed away.
         winshun::debug("ra9fael.binarylab: evalError " + s.evalError);
@@ -734,6 +1048,15 @@ void setType(HWND hwnd, int width, bool isSigned)
     EditorState& s = state();
     if (width == s.width && isSigned == s.isSigned)
         return;
+    // The width of a float result is fixed by its IEEE-754 container. The
+    // toolbar cannot switch f32/f64 without re-encoding, so point at the
+    // expression prefix instead of silently truncating the bit pattern.
+    if (s.isFloat) {
+        s.msg = s.zh ? "浮点位模式请用 f32 / f64 前缀切换" : "use an f32 / f64 prefix to change float width";
+        s.msgTick = GetTickCount();
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return;
+    }
     std::uint64_t v = s.value & binlab::maskFor(s.width);
     if (s.isSigned && width > s.width)
         v = static_cast<std::uint64_t>(binlab::asSigned(v, s.width));
@@ -772,8 +1095,25 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     EditorState& s = state();
     if (msg == WM_KEYDOWN) {
         if (wp == VK_ESCAPE) {
+            if (s.historyOpen) {
+                s.historyOpen = false;
+                InvalidateRect(s.hwnd, nullptr, TRUE);
+                return 0;
+            }
             if (s.hwnd)
                 DestroyWindow(s.hwnd);
+            return 0;
+        }
+        if (wp == VK_RETURN) {
+            commitExpression(s.hwnd);
+            return 0;
+        }
+        if (wp == VK_UP) {
+            historyStep(s.hwnd, true);
+            return 0;
+        }
+        if (wp == VK_DOWN) {
+            historyStep(s.hwnd, false);
             return 0;
         }
         if (wp == VK_TAB) {
@@ -794,9 +1134,9 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             HGDIOBJ old = SelectObject(dc, font);
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, RGB(128, 128, 128));
-            RECT t { rc.left + 6, rc.top, rc.right - 6, rc.bottom };
-            const std::wstring cue = s.zh ? L"输入表达式，如 u8 0xA5 & 0x0F"
-                                          : L"Type an expression, e.g. u8 0xA5 & 0x0F";
+            RECT t { rc.left + 8, rc.top, rc.right - 6, rc.bottom };
+            const std::wstring cue = s.zh ? L"输入表达式 · u8 0xA5 & 0x0F · 4M · f64 1.5"
+                                          : L"Expr · u8 0xA5 & 0x0F · 4M · f64 1.5";
             DrawTextW(dc, cue.c_str(), -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             SelectObject(dc, old);
             DeleteObject(font);
@@ -901,6 +1241,15 @@ void paintSettingsContent(HDC dc)
     }
     RECT hint { mid, rowTop + 4 * kPanelRowH, right, rowTop + 5 * kPanelRowH };
     drawLeftText(dc, hint, wideFromUtf8(s.zh ? "在 WinShun 插件设置中修改" : "Change in WinShun plugin settings"), kLabelText);
+
+    drawSegment(dc, s.rcClearHistory, wideFromUtf8(s.zh ? "清空历史" : "Clear history"), false);
+    const int histY = rowTop + 5 * kPanelRowH;
+    RECT hs { mid, histY, right, histY + kPanelRowH - 2 };
+    const std::string histState = (s.zh ? "历史 " : "History ")
+        + std::to_string(s.history.size()) + " / " + std::to_string(kMaxHistory)
+        + (s.historyPersistent ? (s.zh ? " · 已落盘" : " · saved to disk")
+                               : (s.zh ? " · 仅本次会话" : " · this session only"));
+    drawLeftText(dc, hs, wideFromUtf8(histState), kLabelText);
     SelectObject(dc, old);
     DeleteObject(font);
 }
@@ -915,51 +1264,67 @@ void paintHelpContent(HDC dc)
     const int right = s.clientW - 16;
     const int mid = s.panelCol2;
 
-    RECT t1 { left, s.panelTop, mid - 12, s.panelTop + 20 };
-    RECT t2 { mid, s.panelTop, right, s.panelTop + 20 };
+    const auto textLine = [&](const RECT& r, const std::string& text, COLORREF color) {
+        SetTextColor(dc, color);
+        DrawTextW(dc, wideFromUtf8(text).c_str(), -1, const_cast<LPRECT>(&r),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    };
+
+    // The content area is kPanelContentH=200 tall starting at panelTop=42.
+    // Everything below must fit inside +192 (the status bar starts there).
+    RECT t1 { left, s.panelTop, mid - 12, s.panelTop + 18 };
+    RECT t2 { mid, s.panelTop, right, s.panelTop + 18 };
     drawLeftText(dc, t1, wideFromUtf8(s.zh ? "语法" : "Syntax"), kPanelText);
     drawLeftText(dc, t2, wideFromUtf8(s.zh ? "鼠标与键盘" : "Mouse and keys"), kPanelText);
 
     const char* l[4] = {
-        s.zh ? "0x / 0b / 0o  进制前缀" : "0x / 0b / 0o radix prefixes",
-        s.zh ? "& | ^ ~ << >>   (^ = XOR)" : "& | ^ ~ << >>    (^ = XOR)",
-        s.zh ? "rol / ror  @  7:4  get/set" : "rol / ror  @  7:4  get/set",
-        s.zh ? "u8/u16/u32/u64/i8... 前缀" : "u8/u16/u32/u64/i8... type prefix",
+        s.zh ? "0x/0b/0o · & | ^ ~ << >> (^ = XOR)" : "0x/0b/0o · & | ^ ~ << >> (^ = XOR)",
+        s.zh ? "rol/ror · @ · 7:4 · get/set" : "rol/ror · @ · 7:4 · get/set",
+        s.zh ? "u8..u64/i8.. · f32 f64 · 1.5 .5 1e6 Inf NaN" : "u8..u64/i8.. · f32 f64 · 1.5 .5 1e6 Inf NaN",
+        s.zh ? "单位 k K M G T · Ki Mi Gi Ti · KB/MB/GB" : "Units k K M G T · Ki Mi Gi Ti · KB/MB/GB",
     };
     const char* r[4] = {
         s.zh ? "点击位格翻转 · 拖动涂抹" : "Click toggles · drag paints",
-        s.zh ? "点击读数 / chip 复制" : "Click chips / parity to copy",
-        s.zh ? "方向键移动 · 空格翻转" : "Arrows move · Space toggles",
-        s.zh ? "Ctrl+C/B/D/O · Tab · Esc" : "Ctrl+C/B/D/O · Tab · Esc",
+        s.zh ? "点击 chips / 校验 chip 复制" : "Click chips / parity to copy",
+        s.zh ? "Enter 提交并记历史 · ↑↓ 翻阅 · ▾ 下拉" : "Enter submits · Up/Down browse · ▾ dropdown",
+        s.zh ? "方向键 · 空格 · Ctrl+C/B/D/O · Tab · Esc" : "Arrows · Space · Ctrl+C/B/D/O · Tab · Esc",
     };
     SelectObject(dc, font);
     for (int i = 0; i < 4; ++i) {
-        const int y = s.panelTop + 22 + i * 22;
-        RECT lr { left, y, mid - 12, y + 20 };
-        RECT rr { mid, y, right, y + 20 };
-        drawLeftText(dc, lr, wideFromUtf8(l[i]), kLabelText);
-        drawLeftText(dc, rr, wideFromUtf8(r[i]), kLabelText);
+        const int y = s.panelTop + 20 + i * 17;
+        RECT lr { left, y, mid - 12, y + 16 };
+        RECT rr { mid, y, right, y + 16 };
+        textLine(lr, l[i], kLabelText);
+        textLine(rr, r[i], kLabelText);
     }
 
-    const int sepY = s.panelTop + 112;
+    const int sepY = s.panelTop + 90;
     HGDIOBJ pen = SelectObject(dc, CreatePen(PS_SOLID, 1, kSeparator));
     MoveToEx(dc, left, sepY, nullptr);
     LineTo(dc, right, sepY);
     DeleteObject(SelectObject(dc, pen));
 
     SelectObject(dc, titleFont);
-    RECT t3 { left, s.panelTop + 116, right, s.panelTop + 136 };
-    drawLeftText(dc, t3, wideFromUtf8(s.zh ? "校验术语" : "Parity terms"), kPanelText);
-    const char* b[2] = {
-        s.zh ? "置 1 位数 = 当前位宽内 1 的个数     奇偶性 = 该数是奇还是偶"
-             : "ones = count of 1 bits in the width     parity = odd/even of that count",
-        s.zh ? "偶校验位 = 补它使 1 的总数为偶      奇校验位 = 补它使 1 的总数为奇"
-             : "even-bit = append for an even 1 count   odd-bit = append for an odd 1 count",
+    RECT t3 { left, s.panelTop + 92, right, s.panelTop + 108 };
+    drawLeftText(dc, t3, wideFromUtf8(s.zh ? "校验术语 · 单位 · 浮点" : "Parity · units · floats"), kPanelText);
+
+    const char* b[5] = {
+        s.zh ? "校验：置1位数 · 奇偶性 · 偶/奇校验位 = 补成偶/奇总数"
+             : "Parity: ones · odd/even · even-bit/odd-bit = appended bit",
+        s.zh ? "单位 k/K/M/G/T = 10^n · Ki/Mi/Gi/Ti = 2^n · KB/MB/GB 按 1000"
+             : "Units k/K/M/G/T = 10^n · Ki/Mi/Gi/Ti = 2^n · KB/MB/GB = 1000",
+        s.zh ? "u = micro(10^-6)，不是 unsigned；微符号请用 u / micro / 1e-6"
+             : "u = micro(10^-6), not unsigned; write u / micro / 1e-6 instead",
+        s.zh ? "浮点 1.5 .5 1e6 Inf NaN -> IEEE-754 位模式；f32/f64 切换宽度"
+             : "Floats 1.5 .5 1e6 Inf NaN -> IEEE-754 bits; f32/f64 switch width",
+        s.zh ? "位格色带：紫=符号 S · 蓝=指数 E · 绿=尾数 M；位运算作用于位模式"
+             : "Grid band: purple=S · blue=E · green=M; bit ops act on the pattern",
     };
     SelectObject(dc, font);
-    for (int i = 0; i < 2; ++i) {
-        RECT br { left, s.panelTop + 138 + i * 20, right, s.panelTop + 158 + i * 20 };
-        drawLeftText(dc, br, wideFromUtf8(b[i]), kLabelText);
+    for (int i = 0; i < 5; ++i) {
+        const int y = s.panelTop + 110 + i * 16;
+        RECT br { left, y, right, y + 15 };
+        textLine(br, b[i], kLabelText);
     }
     SelectObject(dc, old);
     DeleteObject(titleFont);
@@ -1030,13 +1395,21 @@ void paint(HWND hwnd)
         drawLeftText(mem, lab, wideFromUtf8(s.zh ? "表达式" : "Expr"), kLabelText);
         RECT border { s.rcExpr.left - 3, s.rcExpr.top - 3, s.rcExpr.right + 3, s.rcExpr.bottom + 3 };
         frameRect(mem, border, kSeparator);
+        RECT hb = s.rcHistoryBtn;
+        HBRUSH hbg = CreateSolidBrush(s.historyOpen ? kAccent : kOverlay);
+        FillRect(mem, &hb, hbg);
+        DeleteObject(hbg);
+        frameRect(mem, hb, s.historyOpen ? kAccent : RGB(80, 90, 102));
+        drawCenteredText(mem, hb, L"\u25BE", s.historyOpen ? kBitOnText : kPanelText);
     }
 
     // ---- result chips ----
     if (bits) {
         const binlab::Repr r = binlab::represent(s.value, s.width, s.isSigned);
-        const char* labels[5] = { "HEX ", "OCT ", "BIN ", "DEC ", s.zh ? "全部" : "All" };
-        const std::string values[5] = { r.hex, r.oct, r.bin, r.dec, "" };
+        const char* labels[5] = { "HEX ", "OCT ", "BIN ",
+                                  s.isFloat ? "FLOAT " : "DEC ", s.zh ? "全部" : "All" };
+        const std::string values[5] = { r.hex, r.oct, r.bin,
+                                        s.isFloat ? s.floatText : r.dec, "" };
         for (int i = 0; i < 5; ++i) {
             RECT c = s.rcChip[i];
             HBRUSH chipBg = CreateSolidBrush(kBitOff);
@@ -1050,7 +1423,11 @@ void paint(HWND hwnd)
                 SelectObject(mem, chipValueFont);
                 const int lwd = textWidth(mem, chipLabelFont, wideFromUtf8(labels[i]));
                 RECT vr { c.left + 10 + lwd, c.top, c.right - 10, c.bottom };
-                drawLeftText(mem, vr, wideFromUtf8(values[i]), kValueText);
+                // Long exact float text is ellipsised rather than overflowing
+                // the chip; copying still returns the full value.
+                SetTextColor(mem, kValueText);
+                DrawTextW(mem, wideFromUtf8(values[i]).c_str(), -1, &vr,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             }
         }
     }
@@ -1095,6 +1472,12 @@ void paint(HWND hwnd)
                 HBRUSH fill = CreateSolidBrush(on ? kBitOn : kBitOff);
                 FillRect(mem, &cell, fill);
                 DeleteObject(fill);
+                if (s.isFloat) {
+                    RECT band { cell.left, cell.top, cell.right, cell.top + 2 };
+                    HBRUSH sb = CreateSolidBrush(floatSegColor(bit, s.width));
+                    FillRect(mem, &band, sb);
+                    DeleteObject(sb);
+                }
                 drawCenteredText(mem, cell, on ? L"1" : L"0", on ? kBitOnText : kBitOffText);
                 if (bit == s.focusBit) {
                     HGDIOBJ fp = SelectObject(mem, CreatePen(PS_SOLID, 2, kFocus));
@@ -1142,8 +1525,12 @@ void paint(HWND hwnd)
     SelectObject(mem, statusFont);
     std::string left;
     if (bits) {
-        left = binlab::typeNameFor(s.width, s.isSigned) + " · " + std::to_string(s.width) + " bit · "
-             + (s.isSigned ? (s.zh ? "有符号" : "signed") : (s.zh ? "无符号" : "unsigned"));
+        if (s.isFloat)
+            left = std::string(s.width == 32 ? "f32" : "f64") + " · IEEE-754 binary"
+                 + std::to_string(s.width) + " · " + s.floatText;
+        else
+            left = binlab::typeNameFor(s.width, s.isSigned) + " · " + std::to_string(s.width) + " bit · "
+                 + (s.isSigned ? (s.zh ? "有符号" : "signed") : (s.zh ? "无符号" : "unsigned"));
     } else if (s.mode == EditorSpec::Mode::Bytes) {
         left = s.zh ? "字节流 · 端序 " : "bytes · endian ";
         left += s.endian == "be" ? "BE" : "LE";
@@ -1166,6 +1553,8 @@ void paint(HWND hwnd)
     std::string right1;
     if (freshMsg)
         right1 = s.msg;
+    else if (bits && !s.unitNote.empty())
+        right1 = compactNote(s.unitNote); // "4Mi -> 4194304"
     else if (bits && s.focusBit >= 0)
         right1 = (s.zh ? "焦点 位 " : "focus bit ") + std::to_string(s.focusBit)
                + " = " + std::to_string(getBit(s.value, s.focusBit));
@@ -1199,6 +1588,50 @@ void paint(HWND hwnd)
                     : (s.zh ? "校验术语见上方，状态栏 chip 可点击复制" : "See parity terms above; status chips are clickable");
         RECT hr { 12, row2, w - 12, h };
         drawLeftText(mem, hr, wideFromUtf8(hint), kLabelText);
+    }
+
+    // ---- expression history dropdown (drawn last, above the content) ----
+    if (bits && s.historyOpen) {
+        SelectObject(mem, statusFont);
+        // Darker than the chips underneath and framed in a brighter line, so
+        // the covered area reads as one panel instead of mixed-up text.
+        const auto panelSurface = [&](const RECT& r) {
+            HBRUSH pb = CreateSolidBrush(RGB(20, 24, 30));
+            FillRect(mem, &r, pb);
+            DeleteObject(pb);
+            frameRect(mem, r, RGB(90, 110, 130));
+        };
+        const int n = std::min<int>(kHistRows, static_cast<int>(s.history.size()));
+        if (n == 0) {
+            RECT r = s.rcHistoryItem[0];
+            r.bottom = r.top + kHistRowH;
+            panelSurface(r);
+            RECT t { r.left + 8, r.top, r.right - 8, r.bottom };
+            drawLeftText(mem, t,
+                         wideFromUtf8(s.zh ? "暂无历史 · 在表达式行按 Enter 提交"
+                                           : "No history yet · press Enter on an expression"),
+                         kLabelText);
+        } else {
+            RECT panel { s.rcHistoryItem[0].left, s.rcHistoryItem[0].top - 2,
+                         s.rcHistoryItem[0].right, s.rcHistoryItem[n - 1].bottom + 2 };
+            panelSurface(panel);
+            for (int i = 0; i < n; ++i) {
+                const int idx = static_cast<int>(s.history.size()) - 1 - i;
+                const HistoryEntry& e = s.history[static_cast<std::size_t>(idx)];
+                RECT r = s.rcHistoryItem[i];
+                if (idx == s.historyPos) {
+                    HBRUSH hl = CreateSolidBrush(RGB(50, 62, 76));
+                    FillRect(mem, &r, hl);
+                    DeleteObject(hl);
+                }
+                RECT lr { r.left + 8, r.top, r.right - 150, r.bottom };
+                RECT rr { r.right - 150, r.top, r.right - 8, r.bottom };
+                SetTextColor(mem, kPanelText);
+                DrawTextW(mem, wideFromUtf8(e.expr).c_str(), -1, &lr,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                drawLeftText(mem, rr, wideFromUtf8(e.result + " · " + e.type), kLabelText);
+            }
+        }
     }
 
     BitBlt(dc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
@@ -1261,23 +1694,55 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const int x = static_cast<int>(LOWORD(lp));
         const int y = static_cast<int>(HIWORD(lp));
         SetFocus(hwnd); // keyboard returns to the shell unless the click hits a control
+        if (s.mode == EditorSpec::Mode::Bits && s.historyOpen) {
+            const int n = std::min<int>(kHistRows, static_cast<int>(s.history.size()));
+            winshun::debug("ra9fael.binarylab: histClick x=" + std::to_string(x)
+                           + " y=" + std::to_string(y) + " n=" + std::to_string(n)
+                           + " row0=" + rectStr(s.rcHistoryItem[0]));
+            for (int i = 0; i < n; ++i) {
+                if (!inRect(s.rcHistoryItem[i], x, y))
+                    continue;
+                const int idx = static_cast<int>(s.history.size()) - 1 - i;
+                SetWindowTextW(s.edit,
+                               wideFromUtf8(s.history[static_cast<std::size_t>(idx)].expr).c_str());
+                s.historyOpen = false;
+                s.historyPos = -1;
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
+            s.historyOpen = false;
+            InvalidateRect(hwnd, nullptr, TRUE);
+        }
         for (int i = 0; i < 5; ++i) {
             if (inRect(s.rcTabs[i], x, y)) {
                 s.mode = static_cast<EditorSpec::Mode>(i);
                 s.focusBit = -1;
                 s.dragging = false;
                 s.hoverParity = -1;
+                s.historyOpen = false;
                 relayout(hwnd);
                 return 0;
             }
         }
         if (s.mode == EditorSpec::Mode::Settings) {
+            if (inRect(s.rcClearHistory, x, y)) {
+                clearHistory();
+                s.msg = s.zh ? "历史已清空" : "history cleared";
+                s.msgTick = GetTickCount();
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
             handleSettingsContentClick(hwnd, x, y);
             return 0;
         }
         if (s.mode == EditorSpec::Mode::Help)
             return 0;
         if (s.mode == EditorSpec::Mode::Bits) {
+            if (inRect(s.rcHistoryBtn, x, y)) {
+                s.historyOpen = !s.historyOpen;
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
             std::string pv[4];
             parityValues(pv);
             for (int i = 0; i < 4; ++i) {
@@ -1303,7 +1768,8 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             for (int i = 0; i < 5; ++i) {
                 if (inRect(s.rcChip[i], x, y)) {
                     static const char* const kNames[5] = { "HEX", "OCT", "BIN", "DEC", "ALL" };
-                    copyBase(hwnd, i == 4 ? 'A' : "HOBD"[i], kNames[i]);
+                    const char* label = (i == 3 && s.isFloat) ? "FLOAT" : kNames[i];
+                    copyBase(hwnd, i == 4 ? 'A' : "HOBD"[i], label);
                     return 0;
                 }
             }
@@ -1347,6 +1813,11 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         EditorState& s = state();
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         if (wp == VK_ESCAPE) {
+            if (s.historyOpen) {
+                s.historyOpen = false;
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
+            }
             DestroyWindow(hwnd);
             return 0;
         }
@@ -1359,7 +1830,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (wp == 'C' || wp == 'c') { copyBase(hwnd, 'H', "HEX"); return 0; }
             if (wp == 'O' || wp == 'o') { copyBase(hwnd, 'O', "OCT"); return 0; }
             if (wp == 'B' || wp == 'b') { copyBase(hwnd, 'B', "BIN"); return 0; }
-            if (wp == 'D' || wp == 'd') { copyBase(hwnd, 'D', "DEC"); return 0; }
+            if (wp == 'D' || wp == 'd') { copyBase(hwnd, 'D', s.isFloat ? "FLOAT" : "DEC"); return 0; }
             return 0;
         }
         if (wp == VK_SPACE) {
@@ -1415,6 +1886,15 @@ void threadMain(EditorSpec spec)
     s.hoverParity = -1;
     s.evalError.clear();
     s.msg.clear();
+    s.isFloat = false;
+    s.floatText.clear();
+    s.unitNote.clear();
+    s.dataDir = spec.dataDir;
+    s.history.clear();
+    s.historyPos = -1;
+    s.historyOpen = false;
+    s.historyPersistent = true;
+    loadHistory();
 
     ensureDpiAwareness();
 
@@ -1460,6 +1940,10 @@ void threadMain(EditorSpec spec)
                              s.rcExpr.bottom - s.rcExpr.top,
                              hwnd, reinterpret_cast<HMENU>(1), wc.hInstance, nullptr);
     SendMessageW(s.edit, WM_SETFONT, reinterpret_cast<WPARAM>(s.editFont), TRUE);
+    // 8px left inset and a 4px right inset; with kEditH=20 the 15px text line
+    // sits centred vertically instead of leaving 9px of dead space below it.
+    SendMessageW(s.edit, 0x00D3 /* EM_SETMARGINS */, 0x0003 /* EC_LEFTMARGIN | EC_RIGHTMARGIN */,
+                 static_cast<LPARAM>(MAKELONG(8, 4)));
     s.origEditProc = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrW(s.edit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(editProc)));
     if (!spec.expression.empty()) {

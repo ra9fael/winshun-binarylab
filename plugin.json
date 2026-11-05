@@ -57,7 +57,7 @@
       "id": "bits",
       "keyword": "bits",
       "title": {"zh": "位运算 / 进制转换", "en": "Bit operations / bases"},
-      "hint": {"zh": "Enter 打开二进制工作台 · 也可输入表达式，如 u8 0xA5 & 0x0F", "en": "Enter opens the workbench · or type an expression, e.g. u8 0xA5 & 0x0F"},
+      "hint": {"zh": "Enter 打开二进制工作台 · 表达式支持单位 4M/4Mi、浮点 f64 1.5", "en": "Enter opens the workbench · expressions accept units 4M/4Mi and floats f64 1.5"},
       "actions": [
         {"id": "copyPrimary", "title": {"zh": "复制主值", "en": "Copy value"}, "key": "Enter"},
         {"id": "openEditor", "title": {"zh": "打开二进制工作台", "en": "Open binary workbench"}, "key": "Ctrl+Enter"},

@@ -230,6 +230,11 @@ winshun::Items bitsItems(const binlab::BitsEval& e, bool zh, bool editorOnEnter)
     items.push_back(makeRow("bits.result.hex", r.hex + tr(zh, " · 十六进制", " · HEX"), context,
                             r.hex, e.detail, e.chain, e.preview, icon, 100, zh, false, "bits",
                             winshun::Json(), editorOnEnter, extra, true));
+    if (e.isFloat)
+        items.push_back(makeRow("bits.result.float", e.floatText + tr(zh, " · 浮点", " · FLOAT"),
+                                e.typeName + " · IEEE-754 " + std::to_string(e.width) + " bit",
+                                e.floatText, e.detail, e.chain, e.preview, "color:#7C3AED", 99,
+                                zh, false, "bits", winshun::Json(), editorOnEnter, extra, true));
     items.push_back(makeRow("bits.result.bin", r.bin + tr(zh, " · 二进制", " · BIN"),
                             e.typeName + " · " + std::to_string(e.width) + " bit · " + binlab::binGrouped(e.result, e.width),
                             r.bin, e.detail, e.chain, e.preview, icon, 98, zh, false, "bits",
@@ -555,6 +560,7 @@ struct BinaryLab : winshun::Plugin {
             spec.hostEndian = st.defaultEndian;
             spec.hostPack = st.defaultPack;
             spec.hostBitsEnter = st.editorOnEnter ? "editor" : "copy";
+            spec.dataDir = dataDir(); // expression history lives in the host data dir
             std::string error;
             if (!binlab::openEditorWindow(spec, error)) {
                 winshun::debug("ra9fael.binarylab: editor window failed: " + error);
