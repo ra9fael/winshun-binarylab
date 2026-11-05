@@ -371,6 +371,78 @@ int main()
               "oracle packed union");
     }
 
+    // ---- unit suffixes (SI / IEC, pure ASCII, decimal literals only) --------
+    {
+        bool ok = false;
+        CHECK(bitsOf("4M", ok, 64) == 4000000ULL && ok, "unit 4M = 4 x 10^6");
+        CHECK(bitsOf("4MB", ok, 64) == 4000000ULL && ok, "unit 4MB follows SI 1000");
+        CHECK(bitsOf("4Mi", ok, 64) == 4194304ULL && ok, "unit 4Mi = 4 x 2^20");
+        CHECK(bitsOf("4MiB", ok, 64) == 4194304ULL && ok, "unit 4MiB longest match");
+        CHECK(bitsOf("1k", ok, 64) == 1000ULL && ok, "unit 1k");
+        CHECK(bitsOf("1K", ok, 64) == 1000ULL && ok, "unit 1K");
+        CHECK(bitsOf("1Ki", ok, 64) == 1024ULL && ok, "unit 1Ki");
+        CHECK(bitsOf("2Gi", ok, 64) == (2ULL << 30) && ok, "unit 2Gi");
+        CHECK(bitsOf("1T", ok, 64) == 1000000000000ULL && ok, "unit 1T");
+        CHECK(bitsOf("1TiB", ok, 64) == (1ULL << 40) && ok, "unit 1TiB");
+        CHECK(bitsOf("0xAB", ok, 64) == 0xABULL && ok, "hex 0xAB keeps its B digit");
+        CHECK(bitsOf("0xDEADBEEF", ok, 64) == 0xDEADBEEFULL && ok, "hex digits are not unit suffixes");
+        CHECK(bitsOf("0x1E6", ok, 64) == 0x1E6ULL && ok, "hex E stays a digit");
+        CHECK(bitsOf("1_000", ok, 64) == 1000ULL && ok, "underscore separator still works");
+        CHECK(bitsOf("4M & 0xFF", ok, 64) == 0 && ok, "units work inside a bitwise expression");
+        const auto note = binlab::evalBits("4Mi", 64, false);
+        CHECK(note.success && note.value.unitNote == "4Mi = 4 x 2^20 = 4194304",
+              "unit conversion is reported, never silent");
+        CHECK(errorCode(binlab::evalBits("4 MB", 32, false)) == "E_UNIT_ATTACH",
+              "a detached suffix gets a specific error");
+        CHECK(errorCode(binlab::evalBits("get 0xA5 7K:4", 32, false)) == "E_UNIT_ON_INDEX",
+              "bit indices reject unit suffixes");
+        CHECK(errorCode(binlab::evalBits("8G", 32, false)) == "E_RANGE",
+              "a scaled value still respects the selected width");
+        CHECK(errorCode(binlab::evalBits("1\xC2\xB5", 32, false)) == "E_BAD_UNIT",
+              "U+00B5 micro sign points at the ASCII spellings");
+        CHECK(errorCode(binlab::evalBits("1\xCE\xBC", 32, false)) == "E_BAD_UNIT",
+              "U+03BC greek mu points at the ASCII spellings");
+        const auto micro = binlab::evalBits("1\xC2\xB5", 32, false);
+        CHECK(!micro.success && micro.failure.hint.find("1e-6") != std::string::npos,
+              "micro-sign error suggests 'u', 'micro' or 1e-6");
+    }
+
+    // ---- IEEE-754 bit-pattern literals ---------------------------------------
+    {
+        bool ok = false;
+        CHECK(bitsOf("1.5", ok, 64) == 0x3FF8000000000000ULL && ok, "f64 1.5 bit pattern");
+        CHECK(bitsOf(".5", ok, 64) == 0x3FE0000000000000ULL && ok, "f64 .5 bit pattern");
+        CHECK(bitsOf("1e6", ok, 64) == 0x412E848000000000ULL && ok, "f64 1e6 bit pattern");
+        CHECK(bitsOf("1_000.25", ok, 64) == 0x408F420000000000ULL && ok, "f64 1000.25 bit pattern");
+        CHECK(bitsOf("0.1", ok, 64) == 0x3FB999999999999AULL && ok, "f64 0.1 bit pattern");
+        CHECK(bitsOf("-0.125", ok, 64) == 0xBFC0000000000000ULL && ok, "f64 -0.125 sign bit");
+        CHECK(bitsOf("f32 1.5", ok, 64) == 0x3FC00000ULL && ok, "f32 1.5 bit pattern");
+        CHECK(bitsOf("f32 0.1", ok, 64) == 0x3DCCCCCDULL && ok, "f32 0.1 bit pattern");
+        CHECK(bitsOf("Inf", ok, 64) == 0x7FF0000000000000ULL && ok, "f64 +Inf bit pattern");
+        CHECK(bitsOf("-Inf", ok, 64) == 0xFFF0000000000000ULL && ok, "f64 -Inf bit pattern");
+        CHECK(bitsOf("1u", ok, 64) == 0x3EB0C6F7A0B5ED8DULL && ok, "1u = micro = 1e-6");
+        CHECK(bitsOf("1micro", ok, 64) == 0x3EB0C6F7A0B5ED8DULL && ok, "1micro = 1u");
+        CHECK(bitsOf("1m", ok, 64) == 0x3F50624DD2F1A9FCULL && ok, "1m = milli = 1e-3");
+        CHECK(bitsOf("1n", ok, 64) == 0x3E112E0BE826D695ULL && ok, "1n = nano");
+        CHECK(bitsOf("1p", ok, 64) == 0x3D719799812DEA11ULL && ok, "1p = pico");
+        CHECK(bitsOf("f32 0x3FC00000", ok, 64) == 0x3FC00000ULL && ok, "f32 accepts a raw pattern");
+        const auto shortest = binlab::evalBits("0.1", 64, false);
+        CHECK(shortest.success && shortest.value.isFloat && shortest.value.floatText == "0.1"
+              && shortest.value.typeName == "f64", "shortest round-tripping float text");
+        const auto decoded = binlab::evalBits("f32 0x3FC00000", 64, false);
+        CHECK(decoded.success && decoded.value.floatText == "1.5", "raw float pattern decodes to text");
+        const auto breakdown = binlab::evalBits("1.5", 64, false);
+        CHECK(breakdown.success && breakdown.value.detail.find("FLOAT 1.5") != std::string::npos
+              && breakdown.value.detail.find("IEEE-754 binary64") != std::string::npos,
+              "detail includes FLOAT text and S/E/M breakdown");
+        CHECK(errorCode(binlab::evalBits("u32 1.5", 32, false)) == "E_FLOAT_TYPE",
+              "an integer type prefix cannot take a float literal");
+        CHECK(errorCode(binlab::evalBits("1.5 & 0xFF", 32, false)) == "E_FLOAT_OP",
+              "no float arithmetic: a float literal stands alone");
+        CHECK(bitsOf("1e-6", ok, 64) == 0x3EB0C6F7A0B5ED8DULL && ok,
+              "1e-6 is a third spelling of micro");
+    }
+
     std::cout << "binarylab logic tests: " << (g_total - g_failed) << "/" << g_total << " passed\n";
     if (g_failed)
         std::cerr << g_failed << " test(s) failed\n";

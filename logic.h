@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <limits>
@@ -278,6 +279,154 @@ inline std::string typeNameFor(int width, bool signedType)
     return std::string(signedType ? "i" : "u") + std::to_string(width);
 }
 
+// Shortest decimal text that round-trips back to the same IEEE-754 bit pattern.
+// Used for the FLOAT chip / DEC row so 0.1 stays "0.1" instead of the noisy
+// 17-digit expansion, while unusual values still get enough digits.
+inline std::string exactFloatText(std::uint64_t bits, bool isDouble)
+{
+    if (isDouble) {
+        double v = 0;
+        std::memcpy(&v, &bits, sizeof v);
+        if (std::isnan(v))
+            return "NaN";
+        if (std::isinf(v))
+            return v > 0 ? "+Inf" : "-Inf";
+        for (int p : {6, 9, 12, 15, 17}) {
+            std::ostringstream o;
+            o << std::setprecision(p) << v;
+            const std::string s = o.str();
+            if (std::strtod(s.c_str(), nullptr) == v)
+                return s;
+        }
+        std::ostringstream o;
+        o << std::setprecision(17) << v;
+        return o.str();
+    }
+    float f = 0;
+    const std::uint32_t low = static_cast<std::uint32_t>(bits & 0xFFFFFFFFu);
+    std::memcpy(&f, &low, sizeof f);
+    if (std::isnan(f))
+        return "NaN";
+    if (std::isinf(f))
+        return f > 0 ? "+Inf" : "-Inf";
+    for (int p : {6, 7, 8, 9}) {
+        std::ostringstream o;
+        o << std::setprecision(p) << static_cast<double>(f);
+        const std::string s = o.str();
+        if (static_cast<float>(std::strtod(s.c_str(), nullptr)) == f)
+            return s;
+    }
+    std::ostringstream o;
+    o << std::setprecision(9) << static_cast<double>(f);
+    return o.str();
+}
+
+// ---- unit suffixes (pure ASCII, decimal literals only) ----------------------
+//
+// A prefix is a pure multiplier; this tool has no physical dimensions. SI uses
+// powers of 10, IEC uses powers of 2, and KB/MB/GB follow SI while KiB/MiB/GiB
+// follow IEC. Sorted by descending suffix length so "MiB" wins over "Mi" over
+// "M". "micro" is the long spelling of the SI micro prefix; "u" is the short
+// one (SPICE convention) and is NOT C's unsigned suffix here.
+struct UnitSpec {
+    const char* suffix;
+    std::uint64_t integerScale; // 0 for fractional scales
+    double scale;
+    bool fractional;
+    const char* note;           // ASCII only, e.g. "10^6" / "2^20"
+};
+
+inline const std::vector<UnitSpec>& unitTable()
+{
+    static const std::vector<UnitSpec> table = {
+        {"micro", 0ULL, 1e-6,  true,  "10^-6"},
+        {"KiB",   std::uint64_t(1) << 10, 1024.0,           false, "2^10"},
+        {"MiB",   std::uint64_t(1) << 20, 1048576.0,        false, "2^20"},
+        {"GiB",   std::uint64_t(1) << 30, 1073741824.0,     false, "2^30"},
+        {"TiB",   std::uint64_t(1) << 40, 1099511627776.0,  false, "2^40"},
+        {"KB",    1000ULL,             1e3,  false, "10^3"},
+        {"MB",    1000000ULL,          1e6,  false, "10^6"},
+        {"GB",    1000000000ULL,       1e9,  false, "10^9"},
+        {"TB",    1000000000000ULL,    1e12, false, "10^12"},
+        {"Ki",    std::uint64_t(1) << 10, 1024.0,           false, "2^10"},
+        {"Mi",    std::uint64_t(1) << 20, 1048576.0,        false, "2^20"},
+        {"Gi",    std::uint64_t(1) << 30, 1073741824.0,     false, "2^30"},
+        {"Ti",    std::uint64_t(1) << 40, 1099511627776.0,  false, "2^40"},
+        {"k",     1000ULL,             1e3,  false, "10^3"},
+        {"K",     1000ULL,             1e3,  false, "10^3"},
+        {"M",     1000000ULL,          1e6,  false, "10^6"},
+        {"G",     1000000000ULL,       1e9,  false, "10^9"},
+        {"T",     1000000000000ULL,    1e12, false, "10^12"},
+        {"m",     0ULL, 1e-3,  true, "10^-3"},
+        {"u",     0ULL, 1e-6,  true, "10^-6"},
+        {"n",     0ULL, 1e-9,  true, "10^-9"},
+        {"p",     0ULL, 1e-12, true, "10^-12"},
+    };
+    return table;
+}
+
+// Strip a suffix only when the head is a plain decimal integer. "0xAB" ends
+// in B and "0xDEADBEEF" contains hex letters, so neither is ever split.
+inline bool splitUnitSuffix(const std::string& token, std::string& number, const UnitSpec*& unit)
+{
+    for (const UnitSpec& u : unitTable()) {
+        const std::size_t n = std::strlen(u.suffix);
+        if (token.size() <= n || token.compare(token.size() - n, n, u.suffix) != 0)
+            continue;
+        const std::string head = token.substr(0, token.size() - n);
+        bool decimal = !head.empty();
+        for (char c : head) {
+            if (!((c >= '0' && c <= '9') || c == '_')) {
+                decimal = false;
+                break;
+            }
+        }
+        if (!decimal)
+            continue;
+        number = head;
+        unit = &u;
+        return true;
+    }
+    return false;
+}
+
+inline bool containsMicroSign(const std::string& s)
+{
+    // U+00B5 MICRO SIGN and U+03BC GREEK SMALL LETTER MU, as UTF-8 bytes.
+    return s.find("\xC2\xB5") != std::string::npos || s.find("\xCE\xBC") != std::string::npos;
+}
+
+inline bool isBareUnitToken(const std::string& t)
+{
+    if (t == "B" || t == "us" || t == "micro")
+        return true;
+    for (const UnitSpec& u : unitTable())
+        if (t == u.suffix)
+            return true;
+    return false;
+}
+
+// Extra information about a parsed literal. `requestFloatWidth` is an input;
+// the remaining fields are outputs.
+struct LiteralInfo {
+    bool isFloat = false;
+    int floatWidth = 64;
+    int requestFloatWidth = 64;
+    std::string floatText;
+    std::string unitNote;
+    bool hasUnit = false;
+};
+
+struct LiteralOptions {
+    bool allowUnit = true;
+    bool allowFloat = true;
+};
+
+// Defined below, after the bytes helpers; evalBits() needs them for the
+// FLOAT readout and the S/E/M breakdown in detail/preview.
+inline std::string formatFloat(std::uint64_t raw, bool isDouble);
+inline std::string floatBreakdown(std::uint64_t raw, bool isDouble);
+
 inline std::string bitGrid(int width, std::uint64_t lhs, std::uint64_t rhs,
                            const std::string& op, std::uint64_t result, bool hasRhs)
 {
@@ -307,9 +456,20 @@ inline std::string bitGrid(int width, std::uint64_t lhs, std::uint64_t rhs,
 // A literal is parsed into a raw bit pattern of `width` bits.
 //   @0xFF  raw bit pattern (range checks against the width still apply)
 //   -2     allowed only for signed types
-inline Outcome<std::uint64_t> parseLiteral(const std::string& tokenIn, int width, bool signedType)
+//   4M     decimal literal with a pure-ASCII unit multiplier (SI/IEC)
+//   1.5    IEEE-754 bit pattern (f32 / f64), reported through LiteralInfo
+//
+// Unit suffixes are stripped only from decimal literals whose head is plain
+// digits, so hex digits such as the B in 0xAB are never mistaken for a unit.
+inline Outcome<std::uint64_t> parseLiteral(const std::string& tokenIn, int width, bool signedType,
+                                           LiteralInfo* info = nullptr,
+                                           const LiteralOptions& opt = LiteralOptions())
 {
     const std::string hint = "bits u8 0xA5 & 0x0F";
+    if (containsMicroSign(tokenIn))
+        return failWith<std::uint64_t>(fail("E_BAD_UNIT",
+            "the micro sign is not an ASCII unit prefix",
+            "use 'u', 'micro' or 1e-6 for 10^-6"));
     std::string token = tokenIn;
     bool raw = false;
     if (!token.empty() && token[0] == '@') {
@@ -341,12 +501,88 @@ inline Outcome<std::uint64_t> parseLiteral(const std::string& tokenIn, int width
             digits = token.substr(2);
         }
     }
+
+    const UnitSpec* unit = nullptr;
+    std::string unitNumber;
+    if (base == 10 && !raw && splitUnitSuffix(digits, unitNumber, unit)) {
+        if (!opt.allowUnit)
+            return failWith<std::uint64_t>(fail("E_UNIT_ON_INDEX",
+                "unit suffixes are not allowed on bit indices or field values",
+                "bits u8 get 0xA5 7:4"));
+        digits = unitNumber;
+    } else {
+        unit = nullptr;
+    }
+
     std::string clean;
     for (char c : digits)
         if (c != '_')
             clean += c;
     if (clean.empty())
         return failWith<std::uint64_t>(fail("E_BAD_LITERAL", "a number has no digits", hint));
+
+    // A decimal point, an exponent, Inf/NaN, or a fractional unit all mean the
+    // caller wants the IEEE-754 bit pattern rather than an integer.
+    bool floatIntent = false;
+    if (base == 10 && !raw) {
+        floatIntent = clean.find('.') != std::string::npos
+                   || clean.find_first_of("eE") != std::string::npos
+                   || (unit != nullptr && unit->fractional);
+        const std::string lc = lower(clean);
+        if (lc == "inf" || lc == "infinity" || lc == "nan")
+            floatIntent = true;
+    }
+    if (floatIntent && !opt.allowFloat) {
+        if (unit != nullptr && unit->fractional)
+            return failWith<std::uint64_t>(fail("E_UNIT_FRACTIONAL",
+                "a fractional unit needs a float type", "bits f64 1e-6"));
+        return failWith<std::uint64_t>(fail("E_FLOAT_NOT_ALLOWED",
+            "a float literal is not allowed here", "bits f64 1.5"));
+    }
+
+    if (floatIntent) {
+        double d = 0;
+        const std::string lc = lower(clean);
+        if (lc == "inf" || lc == "infinity") {
+            d = std::numeric_limits<double>::infinity();
+        } else if (lc == "nan") {
+            d = std::numeric_limits<double>::quiet_NaN();
+        } else {
+            char* end = nullptr;
+            d = std::strtod(clean.c_str(), &end);
+            if (end == clean.c_str() || *end != '\0')
+                return failWith<std::uint64_t>(fail("E_BAD_LITERAL",
+                    "invalid floating literal", "bits f64 1.5"));
+        }
+        if (negative)
+            d = -d;
+        if (unit != nullptr)
+            d *= unit->scale;
+
+        const int fw = info != nullptr ? info->requestFloatWidth : 64;
+        const bool isDouble = fw != 32;
+        std::uint64_t bits = 0;
+        if (isDouble) {
+            std::memcpy(&bits, &d, sizeof bits);
+        } else {
+            const float f = static_cast<float>(d);
+            std::uint32_t low = 0;
+            std::memcpy(&low, &f, sizeof low);
+            bits = low;
+        }
+        if (info != nullptr) {
+            info->isFloat = true;
+            info->floatWidth = fw;
+            info->floatText = exactFloatText(bits, isDouble);
+            info->hasUnit = unit != nullptr;
+            const std::string spelled = clean + (unit != nullptr ? unit->suffix : "");
+            if (unit != nullptr)
+                info->unitNote = spelled + " = " + clean + " x " + unit->note + " = " + info->floatText;
+            else
+                info->unitNote = std::string("IEEE-754 binary") + (isDouble ? "64" : "32") + " bit pattern";
+        }
+        return Outcome<std::uint64_t>::good(bits);
+    }
 
     std::uint64_t value = 0;
     for (char c : clean) {
@@ -359,9 +595,26 @@ inline Outcome<std::uint64_t> parseLiteral(const std::string& tokenIn, int width
         value = value * static_cast<std::uint64_t>(base) + static_cast<std::uint64_t>(d);
     }
 
+    if (unit != nullptr) {
+        const std::uint64_t mult = unit->integerScale;
+        if (mult == 0)
+            return failWith<std::uint64_t>(fail("E_UNIT_FRACTIONAL",
+                "a fractional unit needs a float type", "bits f64 1e-6"));
+        if (value > maskFor(64) / mult)
+            return failWith<std::uint64_t>(fail("E_OVERFLOW", "unit multiplier exceeds 64 bits", hint));
+        const std::uint64_t scaled = value * mult;
+        if (info != nullptr) {
+            info->hasUnit = true;
+            info->unitNote = std::string(clean) + unit->suffix + " = " + clean + " x "
+                           + unit->note + " = " + std::to_string(scaled);
+        }
+        value = scaled;
+    }
+
     const std::uint64_t m = maskFor(width);
     if (value > m)
-        return failWith<std::uint64_t>(fail("E_RANGE", "literal does not fit in the selected width", hint));
+        return failWith<std::uint64_t>(fail("E_RANGE", "literal does not fit in the selected width",
+                                           unit != nullptr ? "bits u64 8G" : hint));
 
     if (signedType && !raw) {
         const std::uint64_t sign = std::uint64_t(1) << (width - 1);
@@ -427,6 +680,16 @@ inline bool isBitsType(const std::string& t, int& width, bool& signedType)
     return true;
 }
 
+// IEEE-754 type prefixes. Float literals produce bit patterns, not float
+// arithmetic: operations on them are deliberately rejected by evalBits().
+inline bool isFloatType(const std::string& t, int& width)
+{
+    const std::string s = lower(t);
+    if (s == "f32") { width = 32; return true; }
+    if (s == "f64") { width = 64; return true; }
+    return false;
+}
+
 struct BitsEval {
     int width = 32;
     bool signedType = false;
@@ -440,6 +703,9 @@ struct BitsEval {
     std::string detail;
     std::string preview;
     std::string chain;
+    bool isFloat = false;        // DEC row shows floatText instead of the integer
+    std::string floatText;       // shortest round-tripping decimal text
+    std::string unitNote;        // e.g. "4M = 4 x 10^6 = 4000000"
 };
 
 inline Outcome<std::pair<int, int>> parseBitRange(const std::string& token, int width)
@@ -448,10 +714,10 @@ inline Outcome<std::pair<int, int>> parseBitRange(const std::string& token, int 
     const std::size_t colon = token.find(':');
     if (colon == std::string::npos || token.find(':', colon + 1) != std::string::npos)
         return failWith<std::pair<int, int>>(fail("E_BAD_RANGE", "a bit range must look like 7:4", hint));
-    auto hi = parseLiteral(token.substr(0, colon), 64, false);
+    auto hi = parseLiteral(token.substr(0, colon), 64, false, nullptr, LiteralOptions {false, false});
     if (!hi.success)
         return failWith<std::pair<int, int>>(hi.failure);
-    auto lo = parseLiteral(token.substr(colon + 1), 64, false);
+    auto lo = parseLiteral(token.substr(colon + 1), 64, false, nullptr, LiteralOptions {false, false});
     if (!lo.success)
         return failWith<std::pair<int, int>>(lo.failure);
     if (hi.value > 63 || lo.value > 63 || lo.value > hi.value || hi.value >= static_cast<std::uint64_t>(width))
@@ -464,24 +730,42 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
     const std::string hint = "bits u8 0xA5 & 0x0F";
     if (input.size() > kMaxInputChars)
         return failWith<BitsEval>(fail("E_INPUT_TOO_LARGE", "input exceeds 16 KiB", hint));
+    if (containsMicroSign(input))
+        return failWith<BitsEval>(fail("E_BAD_UNIT", "the micro sign is not an ASCII unit prefix",
+                                      "use 'u', 'micro' or 1e-6 for 10^-6"));
 
     const std::vector<std::string> tokens = lexBits(input);
     if (tokens.empty())
         return failWith<BitsEval>(fail("E_EMPTY", "no expression", hint));
+    // A detached suffix ("4 MB") becomes two tokens and would otherwise fail
+    // with an unrelated "expected VALUE OP VALUE". Name the real problem.
+    for (const std::string& t : tokens)
+        if (isBareUnitToken(t))
+            return failWith<BitsEval>(fail("E_UNIT_ATTACH", "a unit suffix must be attached to a number",
+                                          "write 4MB (no space), or use 1e6"));
 
     BitsEval e;
     e.width = defaultWidth;
     e.signedType = defaultSigned;
     e.typeName = typeNameFor(defaultWidth, defaultSigned);
+    int floatWidth = 64;
+    bool explicitIntType = false;
     std::size_t at = 0;
-    if (isBitsType(tokens[0], e.width, e.signedType)) {
+    if (isFloatType(tokens[0], floatWidth)) {
+        e.width = floatWidth;
+        e.signedType = false;
+        e.typeName = lower(tokens[0]);
+        e.isFloat = true;
+        ++at;
+    } else if (isBitsType(tokens[0], e.width, e.signedType)) {
         e.typeName = typeNameFor(e.width, e.signedType);
+        explicitIntType = true;
         ++at;
     }
     if (at >= tokens.size())
         return failWith<BitsEval>(fail("E_EMPTY", "no expression after the type", hint));
 
-    const std::uint64_t m = maskFor(e.width);
+    std::uint64_t m = maskFor(e.width);
     const std::vector<std::string> rest(tokens.begin() + static_cast<std::ptrdiff_t>(at), tokens.end());
     const std::string& first = rest[0];
     const auto finish = [&](std::uint64_t result, std::uint64_t lhs, std::uint64_t rhs,
@@ -493,18 +777,33 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
         e.hasRhs = hasRhs;
         e.op = op;
         e.expr = expression;
+        // A float type prefix with a raw bit-pattern operand (f32 0x3FC00000)
+        // has no parsed float text, so decode the result itself.
+        if (e.isFloat && e.floatText.empty())
+            e.floatText = exactFloatText(e.result, e.width == 64);
         const Repr r = represent(e.result, e.width, e.signedType);
+        const std::string decText = e.isFloat ? e.floatText : r.dec;
         std::ostringstream d;
         d << e.typeName << "  " << expression << "\n"
           << "HEX " << r.hex << "   BIN " << r.bin << "   OCT " << r.oct << "\n"
-          << "DEC " << r.dec << "   unsigned " << r.unsignedDec << "   signed " << r.signedDec << "\n"
-          << "grouped " << binGrouped(e.result, e.width) << "\n" << note << "\n"
-          << bitGrid(e.width, e.lhs, e.rhs, op, e.result, hasRhs);
+          << "DEC " << decText << "   unsigned " << r.unsignedDec << "   signed " << r.signedDec << "\n"
+          << "grouped " << binGrouped(e.result, e.width) << "\n" << note << "\n";
+        if (e.isFloat) {
+            d << "FLOAT " << e.floatText << "\n"
+              << floatBreakdown(e.result, e.width == 64);
+        }
+        if (!e.unitNote.empty())
+            d << "unit " << e.unitNote << "\n";
+        d << bitGrid(e.width, e.lhs, e.rhs, op, e.result, hasRhs);
         e.detail = d.str();
         std::ostringstream p;
         p << e.typeName << "  " << expression << "  =  " << r.hex << "\n"
           << bitGrid(e.width, e.lhs, e.rhs, op, e.result, hasRhs)
-          << "HEX " << r.hex << "  BIN " << r.bin << "  OCT " << r.oct << "  DEC " << r.dec << "\n";
+          << "HEX " << r.hex << "  BIN " << r.bin << "  OCT " << r.oct << "  DEC " << decText << "\n";
+        if (e.isFloat)
+            p << "FLOAT " << e.floatText << "\n";
+        if (!e.unitNote.empty())
+            p << "unit " << e.unitNote << "\n";
         e.preview = p.str();
         std::ostringstream c;
         c << "bytes hex";
@@ -520,9 +819,15 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
         if (rest.size() != expected)
             return failWith<BitsEval>(fail("E_SYNTAX", "wrong number of arguments for a field operation",
                                           first == "set" ? "bits u8 set 0xA5 7:4 0x3" : "bits u8 get 0xA5 7:4"));
-        auto base = parseLiteral(rest[1], e.width, e.signedType);
+        LiteralInfo baseInfo;
+        baseInfo.requestFloatWidth = floatWidth;
+        auto base = parseLiteral(rest[1], e.width, e.signedType, &baseInfo);
         if (!base.success)
             return failWith<BitsEval>(base.failure);
+        if (baseInfo.isFloat)
+            return failWith<BitsEval>(fail("E_FLOAT_OP", "a float literal is only allowed as a single value",
+                                          "bits f64 1.5"));
+        e.unitNote = baseInfo.unitNote;
         auto range = parseBitRange(rest[2], e.width);
         if (!range.success)
             return failWith<BitsEval>(range.failure);
@@ -540,7 +845,7 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
         } else if (first == "toggle") {
             result = base.value ^ fieldMask;
         } else {
-            auto v = parseLiteral(rest[3], bitsCount, false);
+            auto v = parseLiteral(rest[3], bitsCount, false, nullptr, LiteralOptions {false, false});
             if (!v.success)
                 return failWith<BitsEval>(v.failure);
             result = (base.value & ~fieldMask) | ((v.value << lo) & fieldMask);
@@ -555,20 +860,42 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
     if (first == "~") {
         if (rest.size() != 2)
             return failWith<BitsEval>(fail("E_SYNTAX", "~ takes exactly one operand", "bits u8 ~0xA5"));
-        auto a = parseLiteral(rest[1], e.width, e.signedType);
+        LiteralInfo li;
+        li.requestFloatWidth = floatWidth;
+        auto a = parseLiteral(rest[1], e.width, e.signedType, &li);
         if (!a.success)
             return failWith<BitsEval>(a.failure);
+        if (li.isFloat)
+            return failWith<BitsEval>(fail("E_FLOAT_OP", "a float literal is only allowed as a single value",
+                                          "bits f64 1.5"));
+        e.unitNote = li.unitNote;
         return finish(~a.value & m, a.value, a.value, false, "~",
                       "~" + hexUpper(a.value, e.width), "complement is masked to the selected width");
     }
 
-    // A single value: just show every representation.
+    // A single value: just show every representation. Float literals widen the
+    // result to their IEEE-754 container so the whole bit pattern is visible.
     if (rest.size() == 1) {
-        auto a = parseLiteral(rest[0], e.width, e.signedType);
+        LiteralInfo li;
+        li.requestFloatWidth = floatWidth;
+        auto a = parseLiteral(rest[0], e.width, e.signedType, &li);
         if (!a.success)
             return failWith<BitsEval>(a.failure);
+        if (li.isFloat) {
+            if (explicitIntType)
+                return failWith<BitsEval>(fail("E_FLOAT_TYPE",
+                    "an integer type prefix cannot take a float literal", "bits f64 1.5"));
+            e.width = li.floatWidth;
+            m = maskFor(e.width);
+            e.signedType = false;
+            e.isFloat = true;
+            e.floatText = li.floatText;
+            e.typeName = li.floatWidth == 32 ? "f32" : "f64";
+        }
+        e.unitNote = li.unitNote;
         return finish(a.value, a.value, a.value, false, "value", hexUpper(a.value, e.width),
-                      "no operation; the value is shown in four bases");
+                      e.isFloat ? "IEEE-754 bit pattern; HEX/OCT/BIN show the encoded bits"
+                                : "no operation; the value is shown in four bases");
     }
 
     if (rest.size() != 3)
@@ -578,15 +905,28 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
     if (!binaryOps.count(op))
         return failWith<BitsEval>(fail("E_UNKNOWN_OP", "unsupported operator", "bits u8 0xA5 & 0x0F"));
 
-    auto a = parseLiteral(rest[0], e.width, e.signedType);
+    LiteralInfo la;
+    la.requestFloatWidth = floatWidth;
+    auto a = parseLiteral(rest[0], e.width, e.signedType, &la);
     if (!a.success)
         return failWith<BitsEval>(a.failure);
+    if (la.isFloat)
+        return failWith<BitsEval>(fail("E_FLOAT_OP", "a float literal is only allowed as a single value",
+                                      "bits f64 1.5"));
+    e.unitNote = la.unitNote;
 
     const bool isShift = op == "<<" || op == ">>" || op == "rol" || op == "ror";
-    auto b = isShift ? parseLiteral(rest[2], 64, false)
-                     : parseLiteral(rest[2], e.width, e.signedType);
+    LiteralInfo lb;
+    lb.requestFloatWidth = floatWidth;
+    auto b = isShift ? parseLiteral(rest[2], 64, false, nullptr, LiteralOptions {false, false})
+                     : parseLiteral(rest[2], e.width, e.signedType, &lb);
     if (!b.success)
         return failWith<BitsEval>(b.failure);
+    if (lb.isFloat)
+        return failWith<BitsEval>(fail("E_FLOAT_OP", "a float literal is only allowed as a single value",
+                                      "bits f64 1.5"));
+    if (!lb.unitNote.empty())
+        e.unitNote = lb.unitNote;
 
     std::uint64_t result = 0;
     std::string note;
