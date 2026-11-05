@@ -1,4 +1,4 @@
-# Binary Lab (`renfei.binarylab`)
+# Binary Lab (`ra9fael.binarylab`)
 
 A WinShun resident plugin for embedded work: parse `hex` / `bin` / `oct` strings,
 visualize bit operations, and compute C-like struct layout. Everything is a
@@ -6,6 +6,43 @@ bounded, pure in-memory computation. The result rows and `preview.text` are
 rendered by the host, and the optional **interactive bit editor** opens its own
 window (only when you trigger it) so you can click bits, drag-paint, and copy
 the edited value in any base.
+
+## Install
+
+1. Download `ra9fael.binarylab-<version>.wsplugin` from the
+   [latest release](https://github.com/ra9fael/winshun-binarylab/releases/latest).
+   Optionally compare its SHA-256 with the `.sha256` file next to it
+   (`Get-FileHash <file> -Algorithm SHA256`).
+2. In Win顺 open **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**
+   and pick the file.
+3. A plugin installed from a local package is **not enabled automatically**.
+   Turn it on in the list; enabling it is how you confirm its permissions
+   (see [Permissions](#permissions-and-data)).
+
+**Update:** install the newer `.wsplugin` the same way. Win顺 sees the same id,
+asks before replacing the old version, and keeps the plugin's data folder.
+
+**Uninstall:** remove it from **设置 → 插件 → 已安装**.
+
+This plugin is a native exe, so it is not listed in Win顺's in-app plugin
+library (the community index accepts script plugins only). The releases of this
+repository are the only distribution channel.
+
+## Build from source
+
+Requirements: Windows 10/11 x64, CMake 3.21+, and either Visual Studio 2022 or
+later (MSVC) or MinGW-w64 GCC 13+. Python 3.10+ for packaging and the
+integration tests.
+
+```powershell
+cmake -S . -B build -A x64                 # MSVC; for MinGW use -G "MinGW Makefiles"
+cmake --build build --config Release       # writes binarylab.exe next to plugin.json
+ctest --test-dir build -C Release --output-on-failure
+python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
+```
+
+To run a local build inside Win顺 without packaging, and for tests and the
+release process, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Commands
 
@@ -147,17 +184,7 @@ uploaded or sent anywhere: there are no network calls.
 - `winshun.h` is copied byte-for-byte from `WinShun/src/plugins-sdk/winshun.h`
   so the plugin is self-contained.
 - Build output goes straight into this folder because `plugin.json` names
-  `binarylab.exe` as `runtime.program`.
-
-```powershell
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-Then enable the plugin in WinShun (`Settings -> Plugins`) and type a keyword.
-Plugin installation is off by default; enabling it is the permission
-confirmation. Developer mode does not replace that confirmation.
+  `binarylab.exe` as `runtime.program`. Build commands: [Build from source](#build-from-source).
 
 ## Verification
 
@@ -169,8 +196,7 @@ commands, empty input, invalid input, settings overrides and all three
 actions.
 
 What has **not** been verified: the actual WinShun GUI message log and hover
-panel, monospace alignment of `preview.text`, keyboard feel, an MSVC build,
-and importing a packaged `.wsplugin` into a fresh profile.
+panel, monospace alignment of `preview.text`, keyboard feel, and importing a packaged `.wsplugin` into a fresh profile.
 
 ## Failure handling
 
@@ -188,12 +214,12 @@ was ~81 ms p95.
 `plugin.schema.json` restricts `runtime.program` to interpreters and an
 official whitelist, and `CONTRIBUTING.md` excludes exe/DLL submissions, so
 this plugin is distributed from its **own repository as a `.wsplugin` package**
-that users import into WinShun. Do not open a source PR against
-`WinShun-plugins`. Package only `plugin.json`, `main.cpp`, `logic.h`,
-`winshun.h`, `CMakeLists.txt`, `README.md`, `TESTPLAN.md`, `ROADMAP.md`,
-`LICENSE`, `tests/` and the built `binarylab.exe` — never the `build/` tree,
-logs, virtual environments, or credentials. Bump `version` for every release.
+that users import into WinShun (see [Install](#install)). Do not open a source
+PR against `WinShun-plugins`. `tools/package.py` builds the package from the
+git-tracked files plus the built `binarylab.exe`, so the `build/` tree, logs and
+anything untracked never ship. Bump `version` for every release; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Release history: [CHANGELOG.md](CHANGELOG.md).

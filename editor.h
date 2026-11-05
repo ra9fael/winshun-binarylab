@@ -431,7 +431,7 @@ void logLayout()
     char line[768];
     if (s.mode == EditorSpec::Mode::Bits) {
         std::snprintf(line, sizeof(line),
-                      "renfei.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d cellW=%d "
+                      "ra9fael.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d cellW=%d "
                       "w8=%d,%d,%d,%d w64=%d,%d,%d,%d sgn1=%d,%d,%d,%d "
                       "chip0=%d,%d,%d,%d chip1=%d,%d,%d,%d chip2=%d,%d,%d,%d chip3=%d,%d,%d,%d chip4=%d,%d,%d,%d "
                       "set=%d,%d,%d,%d help=%d,%d,%d,%d tab1=%d,%d,%d,%d",
@@ -460,7 +460,7 @@ void logLayout()
                       static_cast<int>(rcWidth(s.rcTabs[1])), static_cast<int>(s.rcTabs[1].bottom - s.rcTabs[1].top));
     } else {
         std::snprintf(line, sizeof(line),
-                      "renfei.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d chip0=none "
+                      "ra9fael.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d chip0=none "
                       "set=%d,%d,%d,%d help=%d,%d,%d,%d tab1=%d,%d,%d,%d",
                       s.clientW, s.clientH, s.gridLeft, s.gridTop,
                       static_cast<int>(s.rcSet.left), static_cast<int>(s.rcSet.top),
@@ -565,7 +565,7 @@ void copyBase(HWND hwnd, char which, const char* label)
     EditorState& s = state();
     const std::string text = baseText(which);
     const bool ok = copyToClipboard(hwnd, text);
-    winshun::debug(std::string("renfei.binarylab: copyBase ") + label + " len=" + std::to_string(text.size())
+    winshun::debug(std::string("ra9fael.binarylab: copyBase ") + label + " len=" + std::to_string(text.size())
                    + " ok=" + (ok ? "1" : "0") + " gle=" + std::to_string(GetLastError()));
     if (ok)
         s.msg = s.zh ? std::string("已复制 ") + label + " ✓" : std::string("Copied ") + label;
@@ -647,7 +647,7 @@ void setType(HWND hwnd, int width, bool isSigned)
             }
         }
     }
-    winshun::debug("renfei.binarylab: setType " + binlab::typeNameFor(width, isSigned));
+    winshun::debug("ra9fael.binarylab: setType " + binlab::typeNameFor(width, isSigned));
     relayout(hwnd);
 }
 
@@ -1288,9 +1288,9 @@ void threadMain(EditorSpec spec)
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         } catch (const std::exception& e) {
-            winshun::debug(std::string("renfei.binarylab: editor loop: ") + e.what());
+            winshun::debug(std::string("ra9fael.binarylab: editor loop: ") + e.what());
         } catch (...) {
-            winshun::debug("renfei.binarylab: editor loop: unknown exception");
+            winshun::debug("ra9fael.binarylab: editor loop: unknown exception");
         }
     }
 
@@ -1366,7 +1366,7 @@ void closeEditorAndWait(unsigned timeoutMs)
         // std::thread left in the static EditorState would call std::terminate()
         // at program exit. The detached thread finishes its own cleanup.
         s.worker.detach();
-        winshun::debug("renfei.binarylab: editor close timed out; detached");
+        winshun::debug("ra9fael.binarylab: editor close timed out; detached");
     }
 }
 

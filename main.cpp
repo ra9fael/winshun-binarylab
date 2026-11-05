@@ -387,7 +387,7 @@ winshun::Items memberItems(const winshun::Json& data, bool zh)
 }
 
 struct BinaryLab : winshun::Plugin {
-    std::string name() const override { return "renfei.binarylab"; }
+    std::string name() const override { return "ra9fael.binarylab"; }
 
     // Cleanup runs after serve() has returned: close the editor window and
     // join its thread so the process exits with no UI thread left behind.
@@ -478,11 +478,11 @@ struct BinaryLab : winshun::Plugin {
             spec.zh = zh;
             std::string error;
             if (!binlab::openEditorWindow(spec, error)) {
-                winshun::debug("renfei.binarylab: editor window failed: " + error);
+                winshun::debug("ra9fael.binarylab: editor window failed: " + error);
                 return {winshun::effect::notify(tr(zh, "无法打开编辑器窗口：", "Could not open the editor window: ") + error),
                         winshun::effect::hide()};
             }
-            winshun::debug("renfei.binarylab: editor window opened");
+            winshun::debug("ra9fael.binarylab: editor window opened");
             return {winshun::effect::notify(tr(zh, "交互编辑器已打开（Esc 关闭）", "Interactive editor opened (Esc closes)")),
                     winshun::effect::hide()};
         }
@@ -504,14 +504,14 @@ struct BinaryLab : winshun::Plugin {
     {
         // The base class already replaced settings(); log only to stderr.
         (void)s;
-        winshun::debug("renfei.binarylab: settingsChanged");
+        winshun::debug("ra9fael.binarylab: settingsChanged");
     }
 
     void cancel(long long queryId) override
     {
         // Every query is a bounded synchronous computation; the host discards
         // stale answers by queryId. There is no worker to abort here.
-        winshun::debug("renfei.binarylab: cancel " + std::to_string(queryId));
+        winshun::debug("ra9fael.binarylab: cancel " + std::to_string(queryId));
     }
 };
 

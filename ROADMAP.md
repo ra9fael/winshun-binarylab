@@ -286,6 +286,6 @@ the window, DPI, focus and hotkey cases require a human in the real WinShun UI.
 5. Does MSVC build cleanly with `/utf-8` and the static CRT? Only MinGW-w64 was
    measured for v1.
 6. Is a second plugin id preferable to a permission change on
-   `renfei.binarylab`? Product decision, not a technical one.
+   `ra9fael.binarylab`? Product decision, not a technical one.
 
 No v2 code is written until questions 1 and 2 are measured.

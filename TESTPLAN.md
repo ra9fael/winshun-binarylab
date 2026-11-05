@@ -9,7 +9,7 @@ Status of this document: v1 (`0.1.0`) implementation and verification,
 | Check | Result |
 |---|---|
 | `$schema` points at `WinShun-plugins/schema/plugin.schema.json` | Measured: present in `plugin.json` |
-| `id` matches the folder name (`renfei.binarylab`), three-part version, MIT license | Measured |
+| `id` matches the folder name (`ra9fael.binarylab`), three-part version, MIT license | Measured |
 | `permissions: []`, `sandbox: strict`, `start: lazy`, `timeoutMs: 1500`, `memoryMB: 64`, `encoding: utf-8` | Measured |
 | Host accepts the manifest and resolves the native `runtime.program` | Measured: `wsbench` loaded `resident, 3 command(s)`; the host's `Manifest.cpp` is the authoritative parser |
 | Editor-side `$schema` validation via Python `jsonschema` | Not run: the module is unavailable offline in this workspace (`pip` found no distribution). The `$schema` key is present for editor use; host-side validation passed |
@@ -44,7 +44,7 @@ the host round trip in L3; it only checks fields that `wsbench`'s lossy
 
 | Check | Result |
 |---|---|
-| `initialize` → `{protocolVersion:"1", name:"renfei.binarylab"}` | Measured |
+| `initialize` → `{protocolVersion:"1", name:"ra9fael.binarylab"}` | Measured |
 | `preview.text`, `icon`, `actions` are emitted on stdout | Measured: `color:#185FA5`, 3 actions in order `copyPrimary / copyDetail / chainQuery` with keys `Enter / Ctrl+Enter / Shift+Enter` |
 | Empty `text` → 3 `valid:false` help rows | Measured: `help.bits`, `help.bytes`, `help.struct` |
 | Invalid input → 1 `valid:false` error row | Measured: `error.E_BAD_LITERAL` |
@@ -119,7 +119,9 @@ approached.
    height are **not** guaranteed. Mitigation is already in place: every key
    number also appears in `title`, `subtitle`, `copy` and `data`, so the grid
    is an enhancement, never the only channel.
-3. Build with MSVC to confirm `/utf-8` and the static-CRT path.
+3. ~~Build with MSVC~~ Done 2026-11-05: VS 2026 (MSVC 14.51) x64 Release builds
+   with `/utf-8` and the static CRT (`dumpbin /dependents`: USER32, GDI32,
+   KERNEL32 only); 139/139 pass. The release workflow builds with MSVC.
 4. Package a `.wsplugin` and import it into a fresh profile (installed-off by
    default, permission confirmation on enable).
 5. Add fuzz/property tests driven from outside the C++ test binary, and a
@@ -132,9 +134,11 @@ approached.
   is `FF 20 00`.
 - The design's `p95 < 100 ms` target was a goal, not a measurement. It is now
   measured at 81.26 ms for the 4096-byte case after the optimization above.
-- The layout oracle is **GCC/MinGW `#pragma pack`**, not MSVC `/Zp`. MSVC was
-  not available in this workspace; MSVC ABI agreement is inferred from the
-  documented alignment rule, not measured.
+- The layout oracle is the compiler's own `#pragma pack` layout. It was first
+  measured with GCC/MinGW; on 2026-11-05 the same 139 assertions also passed
+  under MSVC 14.51 x64, so MSVC agreement is measured, not inferred. MSVC warns
+  C4121 (alignment sensitive to packing) on two oracle structs; that warning is
+  the point of those structs.
 - `wsbench` prints items through `itemToJson`, which drops `icon`, `preview`
   and `actions`. Those fields were confirmed on the raw protocol pipe (L2) and
   are parsed by `WinShun/src/plugin/Items.cpp:138-153`; their absence in
