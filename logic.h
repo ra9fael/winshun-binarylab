@@ -900,6 +900,14 @@ struct BitsParser {
     bool atEnd() const { return pos >= toks.size(); }
     const std::string& peek() const { return toks[pos]; }
     bool peekIs(const char* s) const { return !atEnd() && toks[pos] == s; }
+    // Syntax errors name the offending token so the message points somewhere.
+    Failure synNear(const std::string& msg) const
+    {
+        std::string m = msg;
+        if (!atEnd())
+            m += " near '" + toks[pos] + "'";
+        return fail("E_SYNTAX", m, hint);
+    }
     bool eat(const char* s)
     {
         if (peekIs(s)) {
@@ -1034,7 +1042,7 @@ struct BitsParser {
             if (!v.success)
                 return v;
             if (!eat(")"))
-                return failWith<ExprVal>(fail("E_SYNTAX", "expected a closing parenthesis", hint));
+                return failWith<ExprVal>(synNear("expected a closing parenthesis"));
             return v;
         }
         if (atEnd())
@@ -1596,7 +1604,7 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
         if (!parsed.success)
             return failWith<BitsEval>(parsed.failure);
         if (!parser.atEnd())
-            return failWith<BitsEval>(fail("E_SYNTAX", "unexpected token after the expression", hint));
+            return failWith<BitsEval>(parser.synNear("unexpected token after the expression"));
         const ExprVal v = parsed.value;
         e.unitNote = parser.unitNote;
         std::string expression;

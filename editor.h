@@ -56,6 +56,7 @@ struct EditorSpec {
     bool blankExpression = false;
     std::string endian = "le";     // bytes mode (v0.3b)
     int pack = 0;                  // struct mode (v0.3c)
+    bool cMode = false;            // evalMode=c: C integer promotions in the expression line
     bool zh = true;                // window language
 
     // Host settings snapshot shown read-only in the settings tab. The SDK
@@ -65,6 +66,7 @@ struct EditorSpec {
     std::string hostEndian = "le";
     int hostPack = 0;
     std::string hostBitsEnter = "copy";
+    std::string hostEvalMode = "fixed";
     std::string dataDir;           // host dataDir; history.jsonl lives here
 };
 
@@ -109,6 +111,8 @@ struct EditorState {
     std::string hostEndian = "le";
     int hostPack = 0;
     std::string hostBitsEnter = "copy";
+    std::string hostEvalMode = "fixed";
+    bool cMode = false;
     int focusBit = -1;
     bool dragging = false;
     int dragPaint = 0;
@@ -142,6 +146,7 @@ struct EditorState {
     int hoverParity = -1;      // chip under the cursor, for the definition tip
     RECT rcSetWidth[4] = {};   // settings tab: 8 | 16 | 32 | 64
     RECT rcSetSign[2] = {};    // settings tab: u | i
+    RECT rcSetMode[2] = {};    // settings tab: fixed | C
     int panelTop = 0;          // content area for the settings/help tabs
     int panelBottom = 0;
     int panelCol2 = 0;         // left edge of the right column
@@ -463,14 +468,15 @@ void frameRect(HDC dc, const RECT& r, COLORREF color)
 }
 
 // A highlighted (or idle) segmented button, shared by the width toolbar and
-// the settings tab so both always render the same way.
-void drawSegment(HDC dc, const RECT& r, const std::wstring& text, bool active)
+// the settings tab so both always render the same way. A disabled segment
+// keeps its state colour but dims the label (C mode derives the type).
+void drawSegment(HDC dc, const RECT& r, const std::wstring& text, bool active, bool disabled = false)
 {
     HBRUSH fill = CreateSolidBrush(active ? kAccent : kBitOff);
     FillRect(dc, &r, fill);
     DeleteObject(fill);
     frameRect(dc, r, kSeparator);
-    drawCenteredText(dc, r, text, active ? kBitOnText : kBitOffText);
+    drawCenteredText(dc, r, text, disabled ? kSeparator : (active ? kBitOnText : kBitOffText));
 }
 
 const char* tabLabel(int i, bool zh)
@@ -685,6 +691,8 @@ void computeLayout(HDC dc)
             r = {};
         for (RECT& r : s.rcSetSign)
             r = {};
+        for (RECT& r : s.rcSetMode)
+            r = {};
         s.rcClearHistory = {};
     } else {
         // All non-bits tabs share one fixed content height, so switching
@@ -701,8 +709,11 @@ void computeLayout(HDC dc)
         for (int i = 0; i < 2; ++i)
             s.rcSetSign[i] = { bx + i * 48, rowTop + kPanelRowH + 2,
                                bx + i * 48 + 44, rowTop + 2 * kPanelRowH - 2 };
-        s.rcClearHistory = { 16, rowTop + 5 * kPanelRowH + 2,
-                             16 + 132, rowTop + 6 * kPanelRowH - 2 };
+        for (int i = 0; i < 2; ++i)
+            s.rcSetMode[i] = { bx + i * 56, rowTop + 5 * kPanelRowH + 2,
+                               bx + i * 56 + 52, rowTop + 6 * kPanelRowH - 2 };
+        s.rcClearHistory = { s.panelCol2, rowTop + 5 * kPanelRowH + 2,
+                             s.panelCol2 + 132, rowTop + 6 * kPanelRowH - 2 };
     }
     s.clientH = std::max(s.clientH, kMinClientH);
     // The single-line EDIT is made exactly "glyph height + symmetric padding"
@@ -783,6 +794,8 @@ void logLayout()
           + " clearHist=" + rectStr(s.rcClearHistory)
           + " setw0=" + rectStr(s.rcSetWidth[0])
           + " setsgn1=" + rectStr(s.rcSetSign[1])
+          + " setmode1=" + rectStr(s.rcSetMode[1])
+          + " cmode=" + std::to_string(s.cMode ? 1 : 0)
           + " float=" + std::to_string(s.isFloat ? 1 : 0)
           + " histCount=" + std::to_string(s.history.size())
           + " histPersist=" + std::to_string(s.historyPersistent ? 1 : 0);
@@ -1026,7 +1039,8 @@ void evaluate()
         s.evalError.clear();
         return;
     }
-    const auto r = binlab::evalBits(expr, s.width, s.isSigned);
+    const auto r = binlab::evalBits(expr, s.width, s.isSigned,
+                                    s.cMode ? binlab::EvalMode::C : binlab::EvalMode::Fixed);
     if (r.success) {
         s.evalError.clear();
         s.value = r.value.result;
@@ -1324,20 +1338,22 @@ void paintSettingsContent(HDC dc)
     RECT t1 { left, s.panelTop, left + colW, s.panelTop + 24 };
     RECT t2 { mid, s.panelTop, right, s.panelTop + 24 };
     drawLeftText(dc, t1, wideFromUtf8(s.zh ? "本次会话（点击即时生效）" : "This session (click to apply)"), kPanelText);
-    drawLeftText(dc, t2, wideFromUtf8(s.zh ? "插件设置（只读）" : "Plugin settings (read-only)"), kPanelText);
+    drawLeftText(dc, t2, wideFromUtf8(s.zh ? "插件设置（只读 · 在 WinShun 中修改）"
+                                           : "Plugin settings (read-only · change in WinShun)"), kPanelText);
 
     const int rowTop = s.panelTop + 34;
-    const char* labels[5] = {
+    const char* labels[6] = {
         s.zh ? "位宽" : "Width", s.zh ? "符号" : "Sign", s.zh ? "^ 语义" : "^ semantics",
-        s.zh ? "端序" : "Endian", s.zh ? "语言" : "Language",
+        s.zh ? "端序" : "Endian", s.zh ? "语言" : "Language", s.zh ? "运算模式" : "Eval mode",
     };
-    const std::string values[5] = {
+    const std::string values[6] = {
         "", "", "XOR",
         std::string(s.endian == "be" ? "BE" : "LE") + " · pack "
             + (s.pack == 0 ? "natural" : std::to_string(s.pack)),
         s.zh ? "跟随宿主" : "follows host",
+        "", // the fixed/C segments themselves show the mode
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         const int y = rowTop + i * kPanelRowH;
         RECT r { left, y, left + colW, y + kPanelRowH - 2 };
         drawRowStrip(dc, r);
@@ -1352,16 +1368,20 @@ void paintSettingsContent(HDC dc)
     }
     static const int kWidths[4] = { 8, 16, 32, 64 };
     for (int i = 0; i < 4; ++i)
-        drawSegment(dc, s.rcSetWidth[i], std::to_wstring(kWidths[i]), s.width == kWidths[i]);
-    drawSegment(dc, s.rcSetSign[0], L"u", !s.isSigned);
-    drawSegment(dc, s.rcSetSign[1], L"i", s.isSigned);
+        drawSegment(dc, s.rcSetWidth[i], std::to_wstring(kWidths[i]), s.width == kWidths[i], s.cMode);
+    drawSegment(dc, s.rcSetSign[0], L"u", !s.isSigned, s.cMode);
+    drawSegment(dc, s.rcSetSign[1], L"i", s.isSigned, s.cMode);
+    drawSegment(dc, s.rcSetMode[0], wideFromUtf8(s.zh ? "固定宽度" : "fixed"), !s.cMode);
+    drawSegment(dc, s.rcSetMode[1], L"C", s.cMode);
 
-    const char* hostLabels[4] = { "defaultWidth", "defaultEndian", "defaultPack", "bitsEnter" };
-    const std::string hostValues[4] = {
+    const char* hostLabels[5] = { "defaultWidth", "defaultEndian", "defaultPack", "bitsEnter",
+                                  "evalMode" };
+    const std::string hostValues[5] = {
         std::to_string(s.hostWidth), s.hostEndian,
         s.hostPack == 0 ? "0 (natural)" : std::to_string(s.hostPack), s.hostBitsEnter,
+        s.hostEvalMode,
     };
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         const int y = rowTop + i * kPanelRowH;
         RECT r { mid, y, right, y + kPanelRowH - 2 };
         drawRowStrip(dc, r);
@@ -1372,16 +1392,13 @@ void paintSettingsContent(HDC dc)
         DrawTextW(dc, wideFromUtf8(hostValues[i]).c_str(), -1, &rv,
                   DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     }
-    RECT hint { mid, rowTop + 4 * kPanelRowH, right, rowTop + 5 * kPanelRowH };
-    drawLeftText(dc, hint, wideFromUtf8(s.zh ? "在 WinShun 插件设置中修改" : "Change in WinShun plugin settings"), kLabelText);
-
     drawSegment(dc, s.rcClearHistory, wideFromUtf8(s.zh ? "清空历史" : "Clear history"), false);
     const int histY = rowTop + 5 * kPanelRowH;
-    RECT hs { mid, histY, right, histY + kPanelRowH - 2 };
+    RECT hs { mid + 140, histY, right, histY + kPanelRowH - 2 };
     const std::string histState = (s.zh ? "历史 " : "History ")
-        + std::to_string(s.history.size()) + " / " + std::to_string(kMaxHistory)
-        + (s.historyPersistent ? (s.zh ? " · 已落盘" : " · saved to disk")
-                               : (s.zh ? " · 仅本次会话" : " · this session only"));
+        + std::to_string(s.history.size()) + "/" + std::to_string(kMaxHistory)
+        + (s.historyPersistent ? (s.zh ? " · 落盘" : " · saved")
+                               : (s.zh ? " · 会话" : " · session"));
     drawLeftText(dc, hs, wideFromUtf8(histState), kLabelText);
     SelectObject(dc, old);
     DeleteObject(font);
@@ -1411,8 +1428,8 @@ void paintHelpContent(HDC dc)
     drawLeftText(dc, t2, wideFromUtf8(s.zh ? "鼠标与键盘" : "Mouse and keys"), kPanelText);
 
     const char* l[4] = {
-        s.zh ? "0x/0b/0o · & | ^ ~ << >> (^ = XOR)" : "0x/0b/0o · & | ^ ~ << >> (^ = XOR)",
-        s.zh ? "rol/ror · @ · 7:4 · get/set" : "rol/ror · @ · 7:4 · get/set",
+        s.zh ? "0x/0b/0o · & | ^ ~ << >> ( ) + - * / % **" : "0x/0b/0o · & | ^ ~ << >> ( ) + - * / % **",
+        s.zh ? "rol/ror · @ · 7:4 · get/set · 运算模式设置页可切" : "rol/ror · @ · 7:4 · get/set · eval mode in settings",
         s.zh ? "u8..u64/i8.. · f32 f64 · 1.5 .5 1e6 Inf NaN" : "u8..u64/i8.. · f32 f64 · 1.5 .5 1e6 Inf NaN",
         s.zh ? "单位 k K M G T · Ki Mi Gi Ti · KB/MB/GB" : "Units k K M G T · Ki Mi Gi Ti · KB/MB/GB",
     };
@@ -1575,9 +1592,12 @@ void paint(HWND hwnd)
         drawLeftText(mem, sgl, wideFromUtf8(s.zh ? "符号" : "Sign"), kLabelText);
         static const int kWidths[4] = { 8, 16, 32, 64 };
         for (int i = 0; i < 4; ++i)
-            drawSegment(mem, s.rcWidthBtn[i], std::to_wstring(kWidths[i]), s.width == kWidths[i]);
-        drawSegment(mem, s.rcSignBtn[0], wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"), !s.isSigned);
-        drawSegment(mem, s.rcSignBtn[1], wideFromUtf8(s.zh ? "有符号 i" : "signed i"), s.isSigned);
+            drawSegment(mem, s.rcWidthBtn[i], std::to_wstring(kWidths[i]),
+                        s.width == kWidths[i], s.cMode);
+        drawSegment(mem, s.rcSignBtn[0], wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"),
+                    !s.isSigned, s.cMode);
+        drawSegment(mem, s.rcSignBtn[1], wideFromUtf8(s.zh ? "有符号 i" : "signed i"),
+                    s.isSigned, s.cMode);
         SelectObject(mem, statusFont);
         DeleteObject(toolFont);
     }
@@ -1661,6 +1681,10 @@ void paint(HWND hwnd)
         if (s.isFloat)
             left = std::string(s.width == 32 ? "f32" : "f64") + " · IEEE-754 binary"
                  + std::to_string(s.width) + " · " + s.floatText;
+        else if (s.cMode)
+            left = "C · " + binlab::typeNameFor(s.width, s.isSigned) + " · "
+                 + std::to_string(s.width) + " bit · "
+                 + (s.isSigned ? (s.zh ? "有符号" : "signed") : (s.zh ? "无符号" : "unsigned"));
         else
             left = binlab::typeNameFor(s.width, s.isSigned) + " · " + std::to_string(s.width) + " bit · "
                  + (s.isSigned ? (s.zh ? "有符号" : "signed") : (s.zh ? "无符号" : "unsigned"));
@@ -1788,16 +1812,44 @@ void handleSettingsContentClick(HWND hwnd, int x, int y)
 {
     EditorState& s = state();
     static const int kWidths[4] = { 8, 16, 32, 64 };
+    for (int i = 0; i < 2; ++i) {
+        if (inRect(s.rcSetMode[i], x, y)) {
+            const bool c = i == 1;
+            if (c == s.cMode)
+                return;
+            s.cMode = c;
+            s.msg = s.cMode ? (s.zh ? "运算模式：C 升格" : "eval mode: C promotions")
+                            : (s.zh ? "运算模式：固定宽度" : "eval mode: fixed width");
+            s.msgTick = GetTickCount();
+            evaluate();
+            InvalidateRect(hwnd, nullptr, TRUE);
+            winshun::debug(std::string("ra9fael.binarylab: setEvalMode ")
+                           + (c ? "c" : "fixed"));
+            return;
+        }
+    }
     for (int i = 0; i < 4; ++i) {
         if (inRect(s.rcSetWidth[i], x, y)) {
-            setType(hwnd, kWidths[i], s.isSigned);
+            if (s.cMode) {
+                s.msg = s.zh ? "C 模式类型由表达式推导" : "C mode derives the type";
+                s.msgTick = GetTickCount();
+                InvalidateRect(hwnd, nullptr, TRUE);
+            } else {
+                setType(hwnd, kWidths[i], s.isSigned);
+            }
             return;
         }
     }
     for (int i = 0; i < 2; ++i) {
         if (inRect(s.rcSetSign[i], x, y)) {
-            setType(hwnd, s.width, i == 1);
-            InvalidateRect(hwnd, nullptr, TRUE);
+            if (s.cMode) {
+                s.msg = s.zh ? "C 模式类型由表达式推导" : "C mode derives the type";
+                s.msgTick = GetTickCount();
+                InvalidateRect(hwnd, nullptr, TRUE);
+            } else {
+                setType(hwnd, s.width, i == 1);
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
             return;
         }
     }
@@ -1887,14 +1939,26 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             static const int kWidths[4] = { 8, 16, 32, 64 };
             for (int i = 0; i < 4; ++i) {
                 if (inRect(s.rcWidthBtn[i], x, y)) {
-                    setType(hwnd, kWidths[i], s.isSigned);
+                    if (s.cMode) {
+                        s.msg = s.zh ? "C 模式类型由表达式推导" : "C mode derives the type";
+                        s.msgTick = GetTickCount();
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                    } else {
+                        setType(hwnd, kWidths[i], s.isSigned);
+                    }
                     return 0;
                 }
             }
             for (int i = 0; i < 2; ++i) {
                 if (inRect(s.rcSignBtn[i], x, y)) {
-                    setType(hwnd, s.width, i == 1);
-                    InvalidateRect(hwnd, nullptr, TRUE);
+                    if (s.cMode) {
+                        s.msg = s.zh ? "C 模式类型由表达式推导" : "C mode derives the type";
+                        s.msgTick = GetTickCount();
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                    } else {
+                        setType(hwnd, s.width, i == 1);
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                    }
                     return 0;
                 }
             }
@@ -2014,6 +2078,8 @@ void threadMain(EditorSpec spec)
     s.hostEndian = spec.hostEndian;
     s.hostPack = spec.hostPack;
     s.hostBitsEnter = spec.hostBitsEnter;
+    s.hostEvalMode = spec.hostEvalMode;
+    s.cMode = spec.cMode;
     s.focusBit = -1;
     s.dragging = false;
     s.hoverParity = -1;
@@ -2091,6 +2157,10 @@ void threadMain(EditorSpec spec)
     logLayout();
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
+    // Auto-focus the expression line so typing starts immediately; Tab moves
+    // to the bit grid and back.
+    if (s.edit)
+        SetFocus(s.edit);
     SetTimer(hwnd, kTimerId, 250, nullptr);
 
     MSG msg;

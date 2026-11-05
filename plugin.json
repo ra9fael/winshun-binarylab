@@ -50,6 +50,14 @@
       "hint": {"zh": "默认 Enter=复制主值，Ctrl+Enter=打开交互编辑器；选“打开交互编辑器”则两者互换", "en": "Default Enter=copy, Ctrl+Enter=open editor; choose the other to swap them"},
       "default": "copy",
       "options": ["copy", "editor"]
+    },
+    {
+      "key": "evalMode",
+      "type": "choice",
+      "title": {"zh": "运算模式", "en": "Evaluation mode"},
+      "hint": {"zh": "fixed=每步结果限制在位宽内并报告回绕；c=按 C 语言整数提升，结果类型自动推导（显式类型前缀始终按固定宽度）", "en": "fixed=every step stays inside the width and wrapping is reported; c=C integer promotions, result type derived (an explicit type prefix always evaluates fixed)"},
+      "default": "fixed",
+      "options": ["fixed", "c"]
     }
   ],
   "commands": [

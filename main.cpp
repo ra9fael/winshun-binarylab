@@ -24,6 +24,7 @@ struct Settings {
     std::string defaultEndian = "le";
     int defaultPack = 0;
     bool editorOnEnter = false;
+    bool cMode = false;            // evalMode=c: C integer promotions
 };
 
 Settings readSettings(const winshun::Json& s)
@@ -45,6 +46,7 @@ Settings readSettings(const winshun::Json& s)
     if (pack == "1" || pack == "2" || pack == "4" || pack == "8" || pack == "16")
         st.defaultPack = std::stoi(pack);
     st.editorOnEnter = binlab::lower(text("bitsEnter", "copy")) == "editor";
+    st.cMode = binlab::lower(text("evalMode", "fixed")) == "c";
     return st;
 }
 
@@ -495,7 +497,8 @@ struct BinaryLab : winshun::Plugin {
 
         winshun::Items items;
         if (command == "bits") {
-            const auto r = binlab::evalBits(text, st.defaultWidth, false);
+            const auto r = binlab::evalBits(text, st.defaultWidth, false,
+                                            st.cMode ? binlab::EvalMode::C : binlab::EvalMode::Fixed);
             items = r.success ? bitsItems(r.value, zh, st.editorOnEnter)
                               : winshun::Items {makeError(r.failure, zh)};
         } else if (command == "bytes") {
@@ -553,6 +556,7 @@ struct BinaryLab : winshun::Plugin {
             spec.blankExpression = explicitExpr && spec.expression.empty();
             spec.endian = st.defaultEndian;
             spec.pack = st.defaultPack;
+            spec.cMode = st.cMode;
             spec.zh = zh;
             // Read-only snapshot for the settings tab. The SDK has no setter
             // for host settings, so the window can only display them.
@@ -560,6 +564,7 @@ struct BinaryLab : winshun::Plugin {
             spec.hostEndian = st.defaultEndian;
             spec.hostPack = st.defaultPack;
             spec.hostBitsEnter = st.editorOnEnter ? "editor" : "copy";
+            spec.hostEvalMode = st.cMode ? "c" : "fixed";
             spec.dataDir = dataDir(); // expression history lives in the host data dir
             std::string error;
             if (!binlab::openEditorWindow(spec, error)) {
