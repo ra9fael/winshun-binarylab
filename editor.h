@@ -48,6 +48,10 @@ struct EditorSpec {
     int width = 32;                // initial width unless the expression sets one
     bool isSigned = false;         // signedness for the DEC readout
     std::string expression;        // initial expression text (query args)
+    // A blank-state entry (`bits ` with no words) intentionally starts with
+    // no expression at all, so clicking a bit is not overridden by a stale
+    // evaluation. Without this flag an empty expression is seeded with 0x0.
+    bool blankExpression = false;
     std::string endian = "le";     // bytes mode (v0.3b)
     int pack = 0;                  // struct mode (v0.3c)
     bool zh = true;                // window language
@@ -777,6 +781,29 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
     }
+    if (msg == WM_PAINT) {
+        const LRESULT r = CallWindowProcW(s.origEditProc, h, msg, wp, lp);
+        // EM_SETCUEBANNER needs visual styles this process does not enable,
+        // so draw the empty-expression hint ourselves. The native EDIT keeps
+        // its own white background; the hint uses a dark grey on that surface.
+        if (GetWindowTextLengthW(h) == 0) {
+            RECT rc {};
+            GetClientRect(h, &rc);
+            HDC dc = GetDC(h);
+            HFONT font = uiFont(11, false, s.zh);
+            HGDIOBJ old = SelectObject(dc, font);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, RGB(128, 128, 128));
+            RECT t { rc.left + 6, rc.top, rc.right - 6, rc.bottom };
+            const std::wstring cue = s.zh ? L"输入表达式，如 u8 0xA5 & 0x0F"
+                                          : L"Type an expression, e.g. u8 0xA5 & 0x0F";
+            DrawTextW(dc, cue.c_str(), -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            SelectObject(dc, old);
+            DeleteObject(font);
+            ReleaseDC(h, dc);
+        }
+        return r;
+    }
     return CallWindowProc(s.origEditProc, h, msg, wp, lp);
 }
 
@@ -1437,12 +1464,11 @@ void threadMain(EditorSpec spec)
         SetWindowLongPtrW(s.edit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(editProc)));
     if (!spec.expression.empty()) {
         SetWindowTextW(s.edit, wideFromUtf8(spec.expression).c_str()); // fires EN_CHANGE
-        evaluate();
-    } else {
+    } else if (!spec.blankExpression) {
         std::wstring initial = wideFromUtf8("0x" + std::string((spec.width + 3) / 4, '0'));
         SetWindowTextW(s.edit, initial.c_str());
-        evaluate();
     }
+    evaluate();
 
     logLayout();
     ShowWindow(hwnd, SW_SHOWNORMAL);

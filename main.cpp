@@ -253,6 +253,60 @@ winshun::Items bitsItems(const binlab::BitsEval& e, bool zh, bool editorOnEnter)
     return items;
 }
 
+// `bits ` (the keyword followed by a space, no words yet) reaches query() with
+// text="". The host does dispatch that query, but helpItems() marks every row
+// invalid (`Launcher::performPlugin` bails out on !p.valid), so Enter did
+// nothing. Give that state a real first row: the workbench opens with an empty
+// expression and the host's default width, ready to type into. The examples
+// stay below it as autocomplete suggestions.
+winshun::Items emptyBitsItems(const Settings& st, bool zh)
+{
+    const binlab::Repr r = binlab::represent(0, st.defaultWidth, false);
+    const std::string type = binlab::typeNameFor(st.defaultWidth, false);
+    const std::string detail = tr(zh, "二进制工作台 · 默认 ", "Binary workbench · default ")
+                             + type + "\n\n" + kSyntaxHelp;
+    // `expression` is deliberately empty: the editor starts with a blank
+    // input line, and evaluate() leaves its zero value alone until typing.
+    const winshun::Json extra(winshun::Json::Object {
+        {"valueHex", binlab::hexUpper(0, 64)},
+        {"width", st.defaultWidth},
+        {"signedType", false},
+        {"expression", ""},
+    });
+    winshun::Items items;
+    items.push_back(makeRow("bits.open.workbench.empty",
+                            tr(zh, "打开二进制工作台 · 空白", "Open binary workbench · blank"),
+                            tr(zh, "Enter 打开 · 进来直接输入表达式，如 u8 0xA5 & 0x0F",
+                               "Enter opens · type an expression inside, e.g. u8 0xA5 & 0x0F"),
+                            r.hex, detail, "bits ", kSyntaxHelp,
+                            "color:#0F766E", 101, zh, false, "bits",
+                            winshun::Json(), true, extra, true));
+    for (winshun::Item& example : helpItems("bits", zh))
+        items.push_back(std::move(example));
+    return items;
+}
+
+// The host sends the words after the keyword in ActionRequest::text. Accept
+// the full box text too, so a host that includes "bits " still opens a window
+// whose expression parses.
+std::string editorExpression(const std::string& text)
+{
+    std::string expr = winshun::trim(text);
+    const std::string lowered = binlab::lower(expr);
+    for (const char* keyword : {"bits", "bytes", "struct"}) {
+        const std::string prefix = std::string(keyword) + " ";
+        if (binlab::startsWith(lowered, prefix)) {
+            expr = winshun::trim(expr.substr(prefix.size()));
+            break;
+        }
+        if (lowered == keyword) {
+            expr.clear();
+            break;
+        }
+    }
+    return expr;
+}
+
 winshun::Items bytesItems(const binlab::BytesEval& e, bool zh)
 {
     const std::string icon = "color:#0F766E";
@@ -429,8 +483,10 @@ struct BinaryLab : winshun::Plugin {
         }
         if (q.raw.size() > binlab::kMaxInputChars)
             return {makeError(binlab::fail("E_INPUT_TOO_LARGE", "input exceeds 16 KiB", "bits u8 0xA5 & 0x0F"), zh)};
-        if (text.empty() || text == "help" || text == "?" || text == "帮助")
+        if (text == "help" || text == "?" || text == "帮助")
             return helpItems(command, zh);
+        if (text.empty())
+            return command == "bits" ? emptyBitsItems(st, zh) : helpItems(command, zh);
 
         winshun::Items items;
         if (command == "bits") {
@@ -471,17 +527,25 @@ struct BinaryLab : winshun::Plugin {
         const bool zh = chinese();
         if (a.action == "openEditor") {
             const Settings st = readSettings(settings());
-            const winshun::Json d = a.item["data"];
             binlab::EditorSpec spec;
             spec.mode = binlab::EditorSpec::Mode::Bits;
-            spec.value = std::strtoull(d["valueHex"].toString().c_str(), nullptr, 16);
-            spec.width = static_cast<int>(d["width"].toInt(st.defaultWidth));
+            spec.value = std::strtoull(data["valueHex"].toString().c_str(), nullptr, 16);
+            spec.width = static_cast<int>(data["width"].toInt(st.defaultWidth));
             if (spec.width <= 0 || spec.width > 64)
                 spec.width = 32;
-            spec.isSigned = d["signedType"].toBool();
+            spec.isSigned = data["signedType"].toBool();
             // The expression line starts from the query text; the grid then
-            // operates on its live result.
-            spec.expression = a.text.empty() ? d["primary"].toString() : a.text;
+            // operates on its live result. The empty-state entry row carries
+            // an explicit empty expression, which must not be replaced by the
+            // fallback to `primary`.
+            std::string expr = editorExpression(a.text);
+            if (expr.empty())
+                expr = data["primary"].toString();
+            const bool explicitExpr = data["expression"].isString();
+            if (explicitExpr)
+                expr = data["expression"].toString();
+            spec.expression = std::move(expr);
+            spec.blankExpression = explicitExpr && spec.expression.empty();
             spec.endian = st.defaultEndian;
             spec.pack = st.defaultPack;
             spec.zh = zh;
