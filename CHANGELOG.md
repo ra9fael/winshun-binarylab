@@ -8,7 +8,32 @@ future phases live in [ROADMAP.md](ROADMAP.md).
 
 ## [Unreleased]
 
+### Added
+- Full-precedence integer expressions in `bits` and in the workbench
+  expression line: unary `~ + -`, right-associative `**`, `* / %`, `+ -`,
+  `<< >> rol ror`, `& ^ |`, and parentheses (`u8 1 + 2 * 3` = 7,
+  `u8 (1 + 2) * 3` = 9, `u8 1 << 2 + 1` = 8). The classic three-token form
+  keeps its strict per-literal range checks.
+- Two evaluation modes behind the new `evalMode` setting and a session toggle
+  in the workbench settings page: `fixed` (default; every step is masked to
+  the width and wrapping is reported in the detail) and `c` (C integer
+  promotions; the result type is derived and shown in the status bar; signed
+  overflow is `E_RANGE`, an out-of-range shift count is `E_SHIFT`). An
+  explicit type prefix always evaluates at that fixed width.
+- Bash-style editing keys in the expression line: Ctrl+A / E (home / end),
+  Ctrl+U / K (kill to start / end), Ctrl+W and Ctrl+Backspace (word kill),
+  Ctrl+Y (yank), Ctrl+L (clear), Esc (clear, then close).
+- Syntax errors name the offending token (`... near '('`).
+- The workbench focuses the expression box when the window opens.
+
 ### Changed
+- Bare negative literals now wrap to the type instead of erroring
+  (`u8 -1` = `0xFF`, `i8 -129` = `0x7F`), consistent with the fixed-width
+  rule that every step stays inside the width and is reported.
+- The workbench keeps the last good result when a new expression fails to
+  evaluate. The status bar shows the derived result type (prefixed with
+  `C · ` in C mode) and the width / signedness toolbar is disabled in C mode,
+  where the type comes from the expression.
 - `README.md` is now the Chinese (default) documentation; `README.en.md` holds
   the full English text. Both link to each other. The English install steps now
   use Win顺's real English UI labels. No runtime change.

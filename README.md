@@ -54,17 +54,24 @@ python tools/package.py                    # dist/ra9fael.binarylab-<version>.ws
 ### `bits` 语法
 
 ```
-bits [u8|u16|u32|u64|i8|i16|i32|i64] VALUE [OP VALUE]
-     OP       : & | ^ << >> rol ror
-     unary    : ~VALUE
+bits [u8|u16|u32|u64|i8|i16|i32|i64|f32|f64] EXPRESSION
+     运算符   : ~ + -（一元） · ** · * / % · + - · << >> rol ror · & ^ | · 括号
      raw bits : @0xFF          (按位模式重新解释，例如 i8 @0xFF = -1)
      fields   : get|set|clear|toggle VALUE HIGH:LOW [VALUE]
-     literals : 0x… 0b… 0o… 十进制，有符号类型可带 - 号，_ 分隔符
+     literals : 0x… 0b… 0o… 十进制 / 浮点（1.5、1e6、Inf、NaN），_ 分隔符，单位后缀
 ```
 
-无符号右移是逻辑右移，有符号右移是算术右移，`~` 和所有结果都按所选位宽掩码，
-`rol` / `ror` 的位数对位宽取模。移位位数 `>= width` 报错，循环移位不报错。
-字面量按位宽做范围检查，绝不静默截断。
+表达式按 C 风格优先级从高到低求值：一元 → `**`（右结合）→ `* / %` → `+ -` →
+移位/循环 → `&` → `^` → `|`，括号可任意分组；`bits u8 0xA5 & 0x0F` 这种三段
+经典写法仍然可用。求值有两种模式（`evalMode` 设置，工作台设置页可临时切换）：
+
+- **固定宽度**（默认）：每一步结果都掩码到位宽内，发生回绕会在明细里说明。
+- **C 模式**：按 C 语言整数提升运算，结果类型自动推导并显示在状态栏；
+  有符号溢出报 `E_RANGE`，移位位数越界报 `E_SHIFT`。
+
+显式写出类型前缀时永远按该固定宽度求值（前缀优先）。无符号右移是逻辑右移，
+有符号右移是算术右移，`rol` / `ror` 的位数对位宽取模，移位位数 `>= width`
+报错，循环移位不报错。字面量按位宽做范围检查，绝不静默截断。
 
 ### `bytes` 语法
 
@@ -134,7 +141,8 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 | Esc | 关闭（历史下拉打开时先收起下拉） |
 
 编辑时结果 chips 实时显示四种进制。窗口运行在自己的 GUI 线程上；Win顺 关闭时通过
-插件析构函数销毁它。
+插件析构函数销毁它。窗口打开时表达式框自动获得焦点。设置页还有会话内的
+运算模式（固定宽度 / C）切换；C 模式下位宽 / 符号工具栏被禁用，类型由表达式推导。
 
 #### 单位后缀（纯 ASCII）
 
@@ -174,6 +182,7 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 | `defaultEndian` | choice | `le` | 未显式写 `le` / `be` 的类型的字节序 |
 | `defaultPack` | choice | `0` | 省略 `pack=N` 时 `struct` 的 pack |
 | `bitsEnter` | choice | `copy` | `bits` 行上复制 / 编辑器谁占用 Enter。`copy`（默认）= Enter 复制、Ctrl+Enter 打开编辑器；`editor` 反之。 |
+| `evalMode` | choice | `fixed` | 表达式求值模式。`fixed`（默认）每步结果固定在位宽内并报告回绕；`c` 按 C 语言整数提升、结果类型自动推导。显式类型前缀始终按固定宽度求值。 |
 
 设置在 `initialize` 时读取，并在 `settingsChanged` 时刷新；不涉及任何密钥。
 
@@ -207,7 +216,7 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 
 ## 验证
 
-完整矩阵和实测结果见 [TESTPLAN.md](TESTPLAN.md)。摘要：139/139 条纯逻辑断言通过
+完整矩阵和实测结果见 [TESTPLAN.md](TESTPLAN.md)。摘要：215/215 条纯逻辑断言通过
 （含 GCC `#pragma pack` 的 `sizeof` / `alignof` / `offsetof` 参照值），构建出的插件
 还用 `wsbench` 通过真实 `WinShunPluginHost.exe` runner 跑过三条命令、空输入、
 非法输入、设置覆盖和全部三种动作。

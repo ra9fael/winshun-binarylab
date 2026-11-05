@@ -141,6 +141,27 @@
   Verification: 183/183 logic assertions (44 new unit/float vectors) and a
   drive chain covering Enter, dedup, Up/Down, dropdown recall, `4M`/`4Mi`/
   `4MB`, `f64 1.5`, `1u`, clear-history and seven screenshots.
+- **v0.3a6 — implemented (2026-11-06).** Full-precedence integer expressions
+  and two evaluation modes, from the user's request for "basic arithmetic,
+  brackets to keep semantics, and a mode deciding whether evaluation promotes
+  like C". Approved decisions: fixed-width stays the default (every step
+  masked, wrapping reported in the detail); `c` mode promotes like C with the
+  result type derived and shown; an explicit type prefix always wins over
+  C mode; bare negative literals wrap instead of erroring, consistent with
+  the fixed-width philosophy. `logic.h` gains a recursive-descent parser
+  (unary → `**` right-assoc → `* / %` → `+ -` → shift/rotate → `&` → `^` →
+  `|`), portable 64-bit overflow checks (no `__int128`, so MSVC still
+  builds), and `EvalMode::Fixed` / `EvalMode::C`. The GUI shows the mode and
+  the derived result type in the status bar, disables the width/sign toolbar
+  and settings rows in C mode, adds an eval-mode row to the settings page and
+  an `evalMode` row to the host snapshot, focuses the expression box on open,
+  and names the offending token in syntax errors. Bash editing keys
+  (Ctrl+A/E/U/K/W/Backspace/Y/L) and measured expression-line centring
+  landed earlier in this batch. Verification: 215/215 logic assertions
+  (~35 new vectors for precedence, fixed wrap, C promotion/overflow and
+  prefix-wins); drive sections 7h/7i (precedence chips, session mode switch)
+  are written but their GUI run is still pending a desktop that is not in
+  active use.
 - **v0.3b (CRC kernel + bytes workbench + `crc`/`parity` commands) remains
   deferred.** This round and v0.3a3/a4 took priority because they were
   reported by the user while using the workbench.

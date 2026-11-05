@@ -175,6 +175,37 @@ The plugin degrades to session-only and labels that state in the Settings tab
 if `CreateFileW` fails. Real-host confirmation is still outstanding (same
 caveat as L4).
 
+## L7 — Expression parser and evaluation modes (2026-11-06)
+
+- `tests/test_logic.cpp`: **215/215** assertions (183 previous + ~32 new).
+  New vectors cover operator precedence (`u8 1 + 2 * 3` = 7,
+  `u8 (1 + 2) * 3` = 9, `u8 1 << 2 + 1` = 8, `u8 0xF & 3 | 4` = 7,
+  `u16 2 ** 3 ** 2` = 512 right-associative, `i8 -2 ** 2` = 4,
+  `u8 (~0) & 0x0F` = 0x0F), fixed-mode wrapping (`u8 200 + 100` = 0x2C with a
+  "wrapped" note, `i8 -128 - 1` = 127), C-mode promotion (`1 + 2` → i32 3,
+  `0xFFFFFFFF + 0` → u32, `u8 200 + 100` with `EM::C` stays u8 0x2C —
+  prefix wins), C-mode errors (`2147483647 + 1` → E_RANGE,
+  `9223372036854775807 + 1` → E_RANGE, `(-9223372036854775807 - 1) / -1` →
+  E_RANGE, `2 ** 62` → E_RANGE, `2 ** -1` → E_RANGE, `1 << 40` → E_SHIFT,
+  `1 / 0` → E_DIV_ZERO) and C-mode defined unsigned wrap
+  (`0xFFFFFFFF + 1` = 0). Bare negative literals now wrap (`u8 -1` = 0xFF,
+  `i8 -129` = 0x7F); the old error tests for those were removed.
+- `tools/verify/workbench_drive.py` gained sections 7h (precedence through
+  the real GUI chips: `u8 1 + 2 * 3` → `0x07`, `u8 (1 + 2) * 3` → `0x09`,
+  `u8 1 << 2 + 1` → `0x08`, `7 / 2`, `7 % 2`, `1 << 7`) and 7i (settings-page
+  fixed/C switch: `setEvalMode` debug lines, `cmode=` layout flag,
+  `200 + 100` → `0x0000012C` in C mode, `u8 200 + 100` → `0x2C`).
+- **Status of 7h/7i: written, not yet measured.** The 2026-11-06 evening GUI
+  runs collided with live desktop activity — stray IME keystrokes landed in
+  the expression box (`'yige'`) and an external clipboard writer replaced
+  chip copy results — so the runs were aborted instead of fighting the user's
+  desktop. The logic-level expectations above are fully covered by the unit
+  tests; the GUI plumbing still needs one clean drive run (or a human pass in
+  the real WinShun window).
+- The `evalMode` setting itself (fixed vs C from the host) is verified at the
+  logic level; host `settingsChanged` round trip is unchanged plumbing
+  already covered by L2.
+
 ## Honest notes / corrections
 
 - The earlier design example said `bytes oct 377 040 000 -> FF 40 00`. That

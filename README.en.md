@@ -63,18 +63,30 @@ release process, see [CONTRIBUTING.md](CONTRIBUTING.md).
 ### `bits` syntax
 
 ```
-bits [u8|u16|u32|u64|i8|i16|i32|i64] VALUE [OP VALUE]
-     OP       : & | ^ << >> rol ror
-     unary    : ~VALUE
+bits [u8|u16|u32|u64|i8|i16|i32|i64|f32|f64] EXPRESSION
+     operators: ~ + - (unary) · ** · * / % · + - · << >> rol ror · & ^ | · parentheses
      raw bits : @0xFF          (reinterpret a bit pattern, e.g. i8 @0xFF = -1)
      fields   : get|set|clear|toggle VALUE HIGH:LOW [VALUE]
-     literals : 0x… 0b… 0o… decimal, optional - sign for signed types, _ separators
+     literals : 0x… 0b… 0o… decimal / float (1.5, 1e6, Inf, NaN), _ separators, unit suffixes
 ```
 
-Unsigned right shift is logical, signed right shift is arithmetic, `~` and all
-results are masked to the selected width, and `rol` / `ror` reduce the count
-modulo the width. A shift count `>= width` is an error; rotations are not.
-Literals are range-checked against the width and are never silently truncated.
+Expressions evaluate with C-style precedence, tightest first: unary → `**`
+(right-associative) → `* / %` → `+ -` → shifts/rotates → `&` → `^` → `|`,
+with arbitrary parentheses; the classic three-token form
+(`bits u8 0xA5 & 0x0F`) still works. There are two evaluation modes (the
+`evalMode` setting; the workbench settings page can switch it per session):
+
+- **fixed width** (default): every step is masked to the width and wrapping is
+  reported in the detail.
+- **C mode**: integer promotions follow C, the result type is derived and
+  shown in the status bar; signed overflow gives `E_RANGE` and an
+  out-of-range shift count gives `E_SHIFT`.
+
+An explicit type prefix always evaluates at that fixed width (prefix wins).
+Unsigned right shift is logical, signed right shift is arithmetic, and
+`rol` / `ror` reduce the count modulo the width. A shift count `>= width` is
+an error; rotations are not. Literals are range-checked against the width and
+are never silently truncated.
 
 ### `bytes` syntax
 
@@ -150,7 +162,11 @@ strict sandbox as the rest of the plugin. Inside it:
 | Esc | Close (closes the dropdown first if it is open) |
 
 The result chips show the four bases live as you edit. The window lives on its
-own GUI thread; WinShun tears it down through the plugin destructor on shutdown.
+own GUI thread; WinShun tears it down through the plugin destructor on
+shutdown. The expression box is focused when the window opens. The settings
+page also has a session-local eval-mode (fixed / C) toggle; in C mode the
+width and signedness toolbar is disabled because the type comes from the
+expression.
 
 #### Unit suffixes (pure ASCII)
 
@@ -213,6 +229,7 @@ failure shows one `valid: false` row with an error code and a corrected example.
 | `defaultEndian` | choice | `le` | Endianness for types without an explicit `le` / `be` |
 | `defaultPack` | choice | `0` | `pack` for `struct` when `pack=N` is omitted |
 | `bitsEnter` | choice | `copy` | Which of copy / editor takes Enter on `bits` rows. `copy` (default) = Enter copies, Ctrl+Enter opens the editor; `editor` swaps them. |
+| `evalMode` | choice | `fixed` | Expression evaluation mode. `fixed` (default) keeps every step inside the width and reports wrapping; `c` applies C integer promotions and derives the result type. An explicit type prefix always evaluates fixed. |
 
 Settings are read from `initialize` and refreshed on `settingsChanged`; no
 secrets are involved.
@@ -253,7 +270,7 @@ uploaded or sent anywhere: there are no network calls.
 ## Verification
 
 See [TESTPLAN.md](TESTPLAN.md) for the full matrix and the measured results.
-Summary: 139/139 pure-logic assertions pass (including GCC `#pragma pack`
+Summary: 215/215 pure-logic assertions pass (including GCC `#pragma pack`
 `sizeof` / `alignof` / `offsetof` oracles), and the built plugin was driven
 through the real `WinShunPluginHost.exe` runner with `wsbench` for all three
 commands, empty input, invalid input, settings overrides and all three

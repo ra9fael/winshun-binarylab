@@ -8,7 +8,8 @@
 #   4. settings tab (real content area), help tab, direct tab-to-tab switching
 #      with no "close the overlay first" click
 #   5. full untruncated parse error in status row 2
-#   6. screenshots and clean exit 0
+#   6. full-precedence expressions and the session fixed/C eval-mode switch
+#   7. screenshots and clean exit 0
 #
 # Geometry comes from the plugin's stderr "layout:" debug lines; a daemon
 # thread accumulates every stderr line so nothing is lost between steps.
@@ -506,6 +507,39 @@ n = n_layouts()
 click_rect(lay, "tab0")
 time.sleep(0.4)
 layout(n)
+
+# ---- 7h: full-precedence expressions ----------------------------------------
+for expr, want in (("u8 1 + 2 * 3", "0x07"),
+                   ("u8 (1 + 2) * 3", "0x09"),
+                   ("u8 1 << 2 + 1", "0x08"),
+                   ("u8 7 / 2", "0x03"),
+                   ("u8 7 % 2", "0x01"),
+                   ("u8 1 << 7", "0x80")):
+    user32.SendMessageW(edit, WM_SETTEXT, 0, expr)
+    time.sleep(0.4)
+    got = copy_chip(lay, 0)
+    print("expr", expr, "->", got)
+    assert got == want, f"{expr}: expected {want}, got {got!r}"
+
+# ---- 7i: session eval mode switch (fixed <-> C) ------------------------------
+ml, mt, mw_, mh = rect(lay, "setmode1")
+n_mode_clicks = len([l for l in stderr_lines if "setEvalMode" in l])
+post_click(hwnd, ml - 56 + mw_ // 2, mt + mh // 2)  # the "C" segment
+time.sleep(0.5)
+assert len([l for l in stderr_lines if "setEvalMode" in l]) > n_mode_clicks, "C-mode click"
+lay_c = layout(n_layouts())
+assert lay_c["cmode"] == "1", "settings panel must report cmode=1"
+user32.SendMessageW(edit, WM_SETTEXT, 0, "200 + 100")  # no prefix -> C promotions
+time.sleep(0.4)
+assert copy_chip(lay_c, 0) == "0x0000012C", "C mode: i32 promotion"
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u8 200 + 100")  # prefix wins -> fixed wrap
+time.sleep(0.4)
+assert copy_chip(lay_c, 0) == "0x2C", "explicit type prefix still evaluates fixed"
+n = n_layouts()
+post_click(hwnd, ml + mw_ // 2, mt + mh // 2)  # back to "fixed"
+time.sleep(0.5)
+assert any("setEvalMode fixed" in l for l in stderr_lines), "fixed-mode click"
+assert layout(n)["cmode"] == "0", "settings panel must report cmode=0"
 
 user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
 time.sleep(2.3)  # let the clear-history message fade before the final shot
