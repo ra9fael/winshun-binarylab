@@ -144,10 +144,58 @@ strict sandbox as the rest of the plugin. Inside it:
 | Arrow keys | Move the focus cell (Left/Right ±1, Up/Down ±8); the focused cell shows a yellow border |
 | Space | Toggle the focused bit |
 | Ctrl+C / B / D / O | Copy the value as HEX / BIN / DEC / OCT to the clipboard |
-| Esc | Close |
+| Enter (in the expression box) | Re-evaluate and submit the expression to history |
+| Up / Down | Browse submitted history; Down past the newest restores the draft |
+| `▾` at the right of the expression row | Open the last 12 entries; click one to recall and evaluate |
+| Esc | Close (closes the dropdown first if it is open) |
 
 The result chips show the four bases live as you edit. The window lives on its
 own GUI thread; WinShun tears it down through the plugin destructor on shutdown.
+
+#### Unit suffixes (pure ASCII)
+
+| Family | Prefixes | Multiplier | Example |
+|---|---|---|---|
+| SI decimal | `k`/`K`, `M`, `G`, `T` | 10^3 / 10^6 / 10^9 / 10^12 | `4M` = 4,000,000 |
+| IEC binary | `Ki`, `Mi`, `Gi`, `Ti` | 2^10 / 2^20 / 2^30 / 2^40 | `4Mi` = 4,194,304 |
+| Byte spellings | `KB`/`MB`/`GB`, `KiB`/`MiB`/`GiB`/`TiB` | Follow the two rows above | `4MB` = 4,000,000, `4MiB` = 4,194,304 |
+| SI fractional | `m`, `u`/`micro`, `n`, `p` | 10^-3 / 10^-6 / 10^-9 / 10^-12 | `1u` = 10^-6 |
+
+- A suffix must touch the number and is stripped only from decimal literals:
+  the `B` in `0xAB` and the letters in `0xDEADBEEF` stay valid hex digits.
+  `E` is reserved for exponents (`1E6` = 1e6); `M` and `m` are distinct.
+- `u` is micro (10^-6), **not** C's unsigned suffix; `micro` and `1e-6` are
+  equivalent. Typing `µ` or `μ` yields `E_BAD_UNIT` with a hint naming those
+  three ASCII spellings.
+- Bit indices and field values reject units (`get 0xA5 7K:4` gives
+  `E_UNIT_ON_INDEX`); a space between number and suffix gives `E_UNIT_ATTACH`.
+- Conversions are never silent: detail shows
+  `4Mi = 4 x 2^20 = 4194304`, the status bar shows `4Mi -> 4194304`, and a
+  value outside the width still fails with `E_RANGE`.
+
+#### Float bit patterns
+
+`1.5`, `.5`, `1e6`, `1_000.25`, `Inf`, `-Inf` and `NaN` encode into IEEE-754
+bit patterns: `f64` (binary64) by default, `f32` for binary32. HEX / OCT / BIN
+show the encoded bits, the FLOAT chip (replacing DEC in float mode) shows the
+shortest round-tripping decimal text, and a purple / blue / green band marks
+S / E / M at the top of each bit cell.
+
+There is no float arithmetic: a float **literal** must stand alone
+(`1.5 & 0xFF` gives `E_FLOAT_OP`, `u32 1.5` gives `E_FLOAT_TYPE`). To apply bit
+operations to an encoded pattern, write the raw bits, e.g.
+`f32 @0x3FC00000 & 0x007FFFFF`. Fractional units (`1m` / `1u`) take the same
+path.
+
+#### Expression history
+
+Only expressions submitted with Enter and successfully evaluated are recorded;
+live evaluation does not flood the list. History is appended as JSONL to the
+host's `dataDir/history.jsonl`, capped at 200 entries with adjacent duplicates
+removed. If the strict sandbox denies disk writes, it degrades to session-only
+and the Settings tab says so. "Clear history" empties both memory and file.
+There is deliberately **no sixth tab**: history is an input assistant and the
+dropdown stays usable while the bit grid is visible.
 
 Queries have no side effects: they never delete files, start programs, change
 the clipboard, or open a window. Copy and `setQuery` effects are returned only

@@ -120,6 +120,30 @@
   the example-only behaviour until their interactive tabs are built. The drive
   harness covers both query paths, the blank EDIT text and the ordinary
   expression entry.
+- **v0.3a5 — implemented (2026-11-06).** Five expression-line requirements,
+  all decisions taken with the recommended defaults: (1) history is a dropdown
+  plus `Up`/`Down`, **not** a sixth tab; (2) `KB`/`MB`/`GB` follow SI 1000 and
+  `Ki`/`Mi`/`Gi` carry the 1024 meaning; (3) floats are IEEE-754 bit patterns
+  only, with no arithmetic; (4) `u`, `micro` and `1e-6` are all accepted for
+  micro while `µ`/`μ` are rejected with an ASCII hint; (5) fractional units
+  ship together with float parsing rather than an extra phase. `Enter` submits
+  and records a confirmed expression (JSONL in `dataDir`, cap 200, adjacent
+  dedup, Settings-tab clear); the EDIT shrinks to 20px with an 8px left inset.
+  `logic.h` gains `UnitSpec`/`splitUnitSuffix`, `LiteralInfo`/`LiteralOptions`,
+  `exactFloatText`, `isFloatType`, and a float branch in `parseLiteral` that
+  skips integer range checks. Suffixes are stripped only from decimal literals
+  whose head is plain digits, by longest-match, case-sensitively, with `E`
+  reserved for exponents; bit indices and field values pass
+  `LiteralOptions{false,false}`. `BitsEval` carries `isFloat`/`floatText`/
+  `unitNote`; the workbench swaps the DEC chip for FLOAT, paints an S/E/M band
+  on the grid and names `f32`/`f64` in the status bar. `setType` refuses width
+  changes on a float result instead of silently truncating the pattern.
+  Verification: 183/183 logic assertions (44 new unit/float vectors) and a
+  drive chain covering Enter, dedup, Up/Down, dropdown recall, `4M`/`4Mi`/
+  `4MB`, `f64 1.5`, `1u`, clear-history and seven screenshots.
+- **v0.3b (CRC kernel + bytes workbench + `crc`/`parity` commands) remains
+  deferred.** This round and v0.3a3/a4 took priority because they were
+  reported by the user while using the workbench.
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise

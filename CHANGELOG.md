@@ -37,6 +37,28 @@ never published; they are listed below for context.
 - A grey hint is painted inside the empty expression input. The native
   `EM_SETCUEBANNER` is ignored without visual styles, so the subclassed EDIT
   draws it on `WM_PAINT`.
+- Expression history: `Enter` re-evaluates and submits a confirmed expression,
+  `Up`/`Down` browse it and the `▾` button opens a dropdown of the last 12
+  entries. History is JSONL in the host `dataDir`, capped at 200 entries with
+  adjacent duplicates removed; the Settings tab shows its state and offers
+  "Clear history". Deliberately not a sixth tab: history is an input assistant
+  and must stay usable alongside the bit grid. Live `EN_CHANGE` evaluation
+  remains, so typing never needs Enter and the history records only intentional
+  expressions.
+- Pure-ASCII unit suffixes on decimal literals: SI `k/K/M/G/T` (10^n), IEC
+  `Ki/Mi/Gi/Ti` (2^n), byte spellings `KB/MB/GB` (SI 1000) and
+  `KiB/MiB/GiB/TiB` (IEC), plus fractional `m/u/micro/n/p`. `u` means micro
+  (10^-6), not C's unsigned suffix; `µ`/`μ` produce `E_BAD_UNIT` with an
+  ASCII hint. Suffixes are never stripped from `0x`/`0b`/`0o` literals or from
+  bit indices, and a detached suffix (`4 MB`) gets `E_UNIT_ATTACH`.
+- IEEE-754 bit-pattern literals: `1.5`, `.5`, `1e6`, `1_000.25`, `Inf`,
+  `-Inf`, `NaN`, with `f32`/`f64` type prefixes. The result is the encoded bit
+  pattern; a FLOAT chip shows the shortest round-tripping decimal text, status
+  row 1 names the float type, and the bit grid carries a purple/blue/green
+  S/E/M band. No float arithmetic: a float literal must stand alone
+  (`E_FLOAT_OP`), and an integer prefix cannot take one (`E_FLOAT_TYPE`).
+- Unit conversion notes (`4Mi = 4 x 2^20 = 4194304`) in the result detail,
+  with a compact form (`4Mi -> 4194304`) in the status bar.
 
 ### Changed
 - Plugin id is now `ra9fael.binarylab` (was `renfei.binarylab`) and the author
@@ -47,6 +69,10 @@ never published; they are listed below for context.
 - Host settings in the Settings tab are read-only: the SDK provides no setter.
 - The `bits` command hint in `plugin.json` mentions that Enter opens the
   workbench.
+- The expression EDIT is 20px instead of 24px with an 8px left inset, so its
+  text is vertically centred and left-aligned; the freed 40px hosts the
+  history dropdown button. The empty-input hint now also advertises units and
+  floats.
 
 ### Fixed
 - The BIN and DEC copy chips copied each other's value.

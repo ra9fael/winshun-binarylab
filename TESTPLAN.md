@@ -148,6 +148,33 @@ sends `text=""`, `raw="bits "`; `Launcher.cpp:5624` refuses actions on
 `valid: false` rows; `Items.cpp:159` clamps scores to 0..100 (101 becomes 100,
 still above the 90-point examples).
 
+## L6 — Expression line, units and floats (2026-11-06, measured)
+
+- `tests/test_logic.cpp`: **183/183** assertions (139 original + 44 new). New
+  vectors cover SI / IEC / byte spellings, longest-match (`4MiB`), hex-digit
+  regressions (`0xAB`, `0xDEADBEEF`, `0x1E6`), detached suffixes
+  (`E_UNIT_ATTACH`), unit-on-index (`E_UNIT_ON_INDEX`), U+00B5 / U+03BC
+  rejection, and IEEE-754 patterns cross-checked with Python `struct`
+  (`f64 1.5` = `0x3FF8000000000000`, `f32 0.1` = `0x3DCCCCCD`,
+  `1u` = `0x3EB0C6F7A0B5ED8D`, `+Inf` / `-Inf`).
+- `tools/verify/workbench_drive.py`: `ALL CHECKS PASSED`, exit code 0. Beyond
+  the existing chain it drives `VK_RETURN` submission, adjacent dedup,
+  `history.jsonl` creation in a temporary `dataDir`, Up/Down browsing with
+  draft restoration, dropdown recall, `4M` / `4Mi` / `4MB`, `f64 1.5`
+  (HEX + FLOAT chips), `1u`, and Settings-tab clear-history.
+- Eight screenshots inspected: blank cue, bits (EDIT alignment + dropdown
+  button), settings (clear-history + count), help (all five lower lines above
+  the status bar), error, hover, float (S/E/M band) and history dropdown.
+
+### Honest note on this level
+
+The drive harness starts `binarylab.exe` directly over a JSON-RPC pipe; it does
+**not** run inside the host's LOW-integrity job. The `dataDir` write therefore
+proves the persistence code works, **not** that the strict sandbox grants it.
+The plugin degrades to session-only and labels that state in the Settings tab
+if `CreateFileW` fails. Real-host confirmation is still outstanding (same
+caveat as L4).
+
 ## Honest notes / corrections
 
 - The earlier design example said `bytes oct 377 040 000 -> FF 40 00`. That
