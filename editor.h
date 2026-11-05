@@ -105,6 +105,11 @@ struct EditorState {
     int gridTop = 0;
     int gridLeft = 0;
     int gridRows = 1;
+    int cellW = 40;            // adaptive: the 8 columns fill the client width
+    int toolTop = 0;           // width / signedness toolbar row (bits mode)
+    RECT rcWidthBtn[4] = {};   // 8 | 16 | 32 | 64
+    RECT rcSignBtn[2] = {};    // unsigned | signed
+    bool suppressEval = false; // set while the toolbar rewrites the type prefix
 };
 
 EditorState& state()
@@ -174,7 +179,10 @@ constexpr int kTopH = 34;
 constexpr int kExprH = 34;
 constexpr int kChipH = 24;
 constexpr int kChipGap = 6;
-constexpr int kCellW = 40;
+constexpr int kMinCellW = 40;   // floor for the adaptive cell width
+constexpr int kGridMargin = 16; // left/right margin of the bit grid
+constexpr int kNibbleGap = 8;   // extra gap between bit 4 and bit 3 of each byte
+constexpr int kToolH = 26;      // width / signedness toolbar
 constexpr int kCellH = 32;
 constexpr int kLabelH = 14;
 constexpr int kRowGap = 6;
@@ -267,6 +275,13 @@ int bitAt(int rows, int cols, int row, int col)
     return (rows - 1 - row) * cols + (cols - 1 - col);
 }
 
+// Left edge of grid column `col`; a nibble gap splits each byte 4 + 4.
+int cellLeft(int col)
+{
+    const EditorState& s = state();
+    return s.gridLeft + col * s.cellW + (col >= 4 ? kNibbleGap : 0);
+}
+
 // Worst-case base strings for the current width keep the chip geometry stable
 // while the value changes (no layout jitter on every keystroke).
 struct ChipTexts {
@@ -323,7 +338,21 @@ void computeLayout(HDC dc)
     DeleteObject(chipLabelFont);
     DeleteObject(chipValueFont);
 
-    int clientW = std::max(480, 2 * 24 + 8 * kCellW);
+    // Toolbar segment widths (measured, so zh/en both fit).
+    HFONT toolFont = uiFont(12, false, s.zh);
+    const std::wstring toolWidthLabel = wideFromUtf8(s.zh ? "位宽" : "Width");
+    const std::wstring toolSignLabel = wideFromUtf8(s.zh ? "符号" : "Sign");
+    const std::wstring signNames[2] = { wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"),
+                                        wideFromUtf8(s.zh ? "有符号 i" : "signed i") };
+    const int widthLabelW = textWidth(dc, toolFont, toolWidthLabel) + 10;
+    const int signLabelW = textWidth(dc, toolFont, toolSignLabel) + 10;
+    const int widthBtnW = std::max(36, textWidth(dc, toolFont, L"64") + 20);
+    int signBtnW[2];
+    for (int i = 0; i < 2; ++i)
+        signBtnW[i] = textWidth(dc, toolFont, signNames[i]) + 20;
+    DeleteObject(toolFont);
+
+    int clientW = std::max(480, 2 * kGridMargin + 8 * kMinCellW + kNibbleGap);
     if (!chips.empty()) {
         if (oneRow + 24 <= 616)
             clientW = std::max(clientW, oneRow + 24);
@@ -363,9 +392,33 @@ void computeLayout(HDC dc)
     }
 
     s.gridRows = std::max(1, (s.width + 7) / 8);
-    const int contentTop = kTopH + kExprH + 4 + s.resultRows * (kChipH + kChipGap) + 8;
+    int contentTop = kTopH + kExprH + 4 + s.resultRows * (kChipH + kChipGap) + 8;
+    if (bits) {
+        // Width / signedness toolbar sits directly above the grid.
+        s.toolTop = contentTop - 4;
+        int tx = kGridMargin + widthLabelW;
+        for (int i = 0; i < 4; ++i) {
+            s.rcWidthBtn[i] = { tx, s.toolTop, tx + widthBtnW, s.toolTop + kToolH };
+            tx += widthBtnW;
+        }
+        tx += 20 + signLabelW;
+        for (int i = 0; i < 2; ++i) {
+            s.rcSignBtn[i] = { tx, s.toolTop, tx + signBtnW[i], s.toolTop + kToolH };
+            tx += signBtnW[i];
+        }
+        contentTop = s.toolTop + kToolH + 8;
+    } else {
+        s.toolTop = 0;
+        for (RECT& r : s.rcWidthBtn)
+            r = {};
+        for (RECT& r : s.rcSignBtn)
+            r = {};
+    }
     s.gridTop = contentTop + kLabelH;
-    s.gridLeft = (s.clientW - 8 * kCellW) / 2;
+    s.gridLeft = kGridMargin;
+    // Fill the width: 8 cells (each drawn 4px narrower than its pitch) plus
+    // the nibble gap span exactly clientW - 2 * margin.
+    s.cellW = std::max(kMinCellW, (s.clientW - 2 * kGridMargin - kNibbleGap + 4) / 8);
     s.clientH = s.gridTop + s.gridRows * (kLabelH + kCellH + kRowGap) + 8 + kStatusH;
     s.rcExpr = { 64, kTopH + (kExprH - 24) / 2, s.clientW - 12, kTopH + (kExprH + 24) / 2 };
 }
@@ -375,13 +428,20 @@ void computeLayout(HDC dc)
 void logLayout()
 {
     EditorState& s = state();
-    char line[512];
+    char line[768];
     if (s.mode == EditorSpec::Mode::Bits) {
         std::snprintf(line, sizeof(line),
-                      "renfei.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d "
+                      "renfei.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d cellW=%d "
+                      "w8=%d,%d,%d,%d w64=%d,%d,%d,%d sgn1=%d,%d,%d,%d "
                       "chip0=%d,%d,%d,%d chip1=%d,%d,%d,%d chip2=%d,%d,%d,%d chip3=%d,%d,%d,%d chip4=%d,%d,%d,%d "
                       "set=%d,%d,%d,%d help=%d,%d,%d,%d tab1=%d,%d,%d,%d",
-                      s.clientW, s.clientH, s.gridLeft, s.gridTop,
+                      s.clientW, s.clientH, s.gridLeft, s.gridTop, s.cellW,
+                      static_cast<int>(s.rcWidthBtn[0].left), static_cast<int>(s.rcWidthBtn[0].top),
+                      static_cast<int>(rcWidth(s.rcWidthBtn[0])), kToolH,
+                      static_cast<int>(s.rcWidthBtn[3].left), static_cast<int>(s.rcWidthBtn[3].top),
+                      static_cast<int>(rcWidth(s.rcWidthBtn[3])), kToolH,
+                      static_cast<int>(s.rcSignBtn[1].left), static_cast<int>(s.rcSignBtn[1].top),
+                      static_cast<int>(rcWidth(s.rcSignBtn[1])), kToolH,
                       static_cast<int>(s.rcChip[0].left), static_cast<int>(s.rcChip[0].top),
                       static_cast<int>(rcWidth(s.rcChip[0])), static_cast<int>(s.rcChip[0].bottom - s.rcChip[0].top),
                       static_cast<int>(s.rcChip[1].left), static_cast<int>(s.rcChip[1].top),
@@ -444,8 +504,8 @@ int hitBit(int x, int y)
         if (y < cellTop || y > cellTop + kLabelH + kCellH)
             continue;
         for (int col = 0; col < 8; ++col) {
-            const int cellLeft = s.gridLeft + col * kCellW;
-            if (x < cellLeft || x > cellLeft + kCellW)
+            const int left = cellLeft(col);
+            if (x < left || x >= left + s.cellW - 4)
                 continue;
             const int bit = bitAt(s.gridRows, 8, row, col);
             return bit < s.width ? bit : -1;
@@ -520,7 +580,7 @@ void copyBase(HWND hwnd, char which, const char* label)
 void evaluate()
 {
     EditorState& s = state();
-    if (!s.edit || s.mode != EditorSpec::Mode::Bits)
+    if (!s.edit || s.mode != EditorSpec::Mode::Bits || s.suppressEval)
         return;
     const int len = GetWindowTextLengthW(s.edit);
     std::wstring w(static_cast<std::size_t>(len > 0 ? len : 0), L'\0');
@@ -547,6 +607,48 @@ void evaluate()
         s.evalError = r.failure.code + ": " + r.failure.message;
     }
     InvalidateRect(s.hwnd, nullptr, TRUE);
+}
+
+// Change the active type from the toolbar or the settings panel. The bit
+// pattern on display is kept (truncated, or extended - sign-extended when the
+// old type was signed). A leading type prefix in the expression is rewritten
+// so the next re-evaluation agrees with the click instead of reverting it.
+void setType(HWND hwnd, int width, bool isSigned)
+{
+    EditorState& s = state();
+    if (width == s.width && isSigned == s.isSigned)
+        return;
+    std::uint64_t v = s.value & binlab::maskFor(s.width);
+    if (s.isSigned && width > s.width)
+        v = static_cast<std::uint64_t>(binlab::asSigned(v, s.width));
+    s.value = v & binlab::maskFor(width);
+    s.width = width;
+    s.isSigned = isSigned;
+    if (s.focusBit >= width)
+        s.focusBit = width - 1;
+
+    if (s.edit) {
+        const int len = GetWindowTextLengthW(s.edit);
+        std::wstring w(static_cast<std::size_t>(len > 0 ? len : 0), L'\0');
+        if (len > 0)
+            GetWindowTextW(s.edit, w.data(), len + 1);
+        const std::size_t b = w.find_first_not_of(L" \t");
+        if (b != std::wstring::npos) {
+            std::size_t e = w.find_first_of(L" \t", b);
+            if (e == std::wstring::npos)
+                e = w.size();
+            int pw = 0;
+            bool ps = false;
+            if (binlab::isBitsType(utf8FromWide(w.substr(b, e - b)), pw, ps)) {
+                w.replace(b, e - b, wideFromUtf8(binlab::typeNameFor(width, isSigned)));
+                s.suppressEval = true;
+                SetWindowTextW(s.edit, w.c_str());
+                s.suppressEval = false;
+            }
+        }
+    }
+    winshun::debug("renfei.binarylab: setType " + binlab::typeNameFor(width, isSigned));
+    relayout(hwnd);
 }
 
 LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
@@ -661,7 +763,7 @@ void paintHelp(HDC dc, const RECT& rc)
         s.zh ? "键盘：方向键移动焦点 · 空格翻转" : "Keys: arrows move focus · Space toggles",
         s.zh ? "        Ctrl+C/B/D/O 复制 HEX/OCT/BIN/DEC" : "        Ctrl+C/B/D/O copy HEX/OCT/BIN/DEC",
         s.zh ? "        Tab 回到表达式 · Esc 关闭" : "        Tab returns to the expression · Esc closes",
-        s.zh ? "设置：类型前缀（如 u8）会临时覆盖位宽/符号" : "Settings: a type prefix (u8) overrides width/signedness",
+        s.zh ? "设置：顶部位宽/符号按钮随时切换；类型前缀（如 u8）同步改写" : "Settings: toolbar switches width/sign; a type prefix (u8) is kept in sync",
     };
     int y = rc.top + 34;
     for (const char* line : lines) {
@@ -761,6 +863,30 @@ void paint(HWND hwnd)
         }
     }
 
+    // ---- width / signedness toolbar ----
+    if (bits) {
+        HFONT toolFont = uiFont(12, false, s.zh);
+        SelectObject(mem, toolFont);
+        RECT wl { kGridMargin, s.toolTop, s.rcWidthBtn[0].left, s.toolTop + kToolH };
+        drawLeftText(mem, wl, wideFromUtf8(s.zh ? "位宽" : "Width"), kLabelText);
+        RECT sgl { s.rcWidthBtn[3].right + 20, s.toolTop, s.rcSignBtn[0].left, s.toolTop + kToolH };
+        drawLeftText(mem, sgl, wideFromUtf8(s.zh ? "符号" : "Sign"), kLabelText);
+        auto segment = [&](const RECT& r, const std::wstring& text, bool active) {
+            HBRUSH fill = CreateSolidBrush(active ? kAccent : kBitOff);
+            FillRect(mem, &r, fill);
+            DeleteObject(fill);
+            frameRect(mem, r, kSeparator);
+            drawCenteredText(mem, r, text, active ? kBitOnText : kBitOffText);
+        };
+        static const int kWidths[4] = { 8, 16, 32, 64 };
+        for (int i = 0; i < 4; ++i)
+            segment(s.rcWidthBtn[i], std::to_wstring(kWidths[i]), s.width == kWidths[i]);
+        segment(s.rcSignBtn[0], wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"), !s.isSigned);
+        segment(s.rcSignBtn[1], wideFromUtf8(s.zh ? "有符号 i" : "signed i"), s.isSigned);
+        SelectObject(mem, statusFont);
+        DeleteObject(toolFont);
+    }
+
     // ---- content area ----
     if (bits) {
         for (int row = 0; row < s.gridRows; ++row) {
@@ -770,8 +896,7 @@ void paint(HWND hwnd)
                 const int bit = bitAt(s.gridRows, 8, row, col);
                 if (bit >= s.width)
                     continue;
-                RECT cell { s.gridLeft + col * kCellW, cellTop,
-                            s.gridLeft + (col + 1) * kCellW, cellTop + kLabelH };
+                RECT cell { cellLeft(col), cellTop, cellLeft(col) + s.cellW - 4, cellTop + kLabelH };
                 drawCenteredText(mem, cell, std::to_wstring(bit), kLabelText);
             }
             SelectObject(mem, cellFont);
@@ -780,8 +905,8 @@ void paint(HWND hwnd)
                 if (bit >= s.width)
                     continue;
                 const bool on = getBit(s.value, bit) != 0;
-                RECT cell { s.gridLeft + col * kCellW, cellTop + kLabelH,
-                            s.gridLeft + (col + 1) * kCellW - 4, cellTop + kLabelH + kCellH };
+                RECT cell { cellLeft(col), cellTop + kLabelH,
+                            cellLeft(col) + s.cellW - 4, cellTop + kLabelH + kCellH };
                 HBRUSH fill = CreateSolidBrush(on ? kBitOn : kBitOff);
                 FillRect(mem, &cell, fill);
                 DeleteObject(fill);
@@ -833,16 +958,24 @@ void paint(HWND hwnd)
     } else {
         left = std::string("pack=") + (s.pack == 0 ? "natural" : std::to_string(s.pack));
     }
-    RECT sl { 12, statusRect.top, w / 2 - 40, h };
+    RECT sl { 12, statusRect.top, w / 2 - 70, h };
     drawLeftText(mem, sl, wideFromUtf8(left), kLabelText);
 
     std::string mid;
-    if (bits && s.focusBit >= 0)
-        mid = s.zh ? "焦点位 " + std::to_string(s.focusBit) + " · 位值 "
-                       + std::to_string(getBit(s.value, s.focusBit))
-                   : "focus bit " + std::to_string(s.focusBit) + " · value "
-                       + std::to_string(getBit(s.value, s.focusBit));
-    RECT sm { w / 2 - 40, statusRect.top, w - 190, h };
+    if (bits) {
+        // Live parity over the active width: popcount plus even/odd.
+        const std::uint64_t v = s.value & binlab::maskFor(s.width);
+        int ones = 0;
+        for (int b = 0; b < s.width; ++b)
+            ones += getBit(v, b);
+        const bool even = ones % 2 == 0;
+        mid = s.zh ? std::string("1 的个数 ") + std::to_string(ones) + " · " + (even ? "偶校验位 0" : "偶校验位 1")
+                   : std::string("ones ") + std::to_string(ones) + " · " + (even ? "even, parity 0" : "odd, parity 1");
+        if (s.focusBit >= 0)
+            mid += (s.zh ? " · 位" : " · bit") + std::to_string(s.focusBit) + "="
+                 + std::to_string(getBit(s.value, s.focusBit));
+    }
+    RECT sm { w / 2 - 70, statusRect.top, w - 190, h };
     drawCenteredText(mem, sm, wideFromUtf8(mid), kLabelText);
 
     // Right slot: a parse error persists (red); a copied message fades (green).
@@ -887,8 +1020,7 @@ void paint(HWND hwnd)
 void cycleWidth(HWND hwnd)
 {
     EditorState& s = state();
-    s.width = s.width == 8 ? 16 : s.width == 16 ? 32 : s.width == 32 ? 64 : 8;
-    relayout(hwnd);
+    setType(hwnd, s.width == 8 ? 16 : s.width == 16 ? 32 : s.width == 32 ? 64 : 8, s.isSigned);
 }
 
 void handleSettingsClick(HWND hwnd, int x, int y)
@@ -910,7 +1042,7 @@ void handleSettingsClick(HWND hwnd, int x, int y)
         if (i == 0)
             cycleWidth(hwnd);
         else if (i == 1)
-            s.isSigned = !s.isSigned;
+            setType(hwnd, s.width, !s.isSigned);
         InvalidateRect(hwnd, nullptr, TRUE);
         return;
     }
@@ -971,10 +1103,24 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (s.mode == EditorSpec::Mode::Bits) {
+            static const int kWidths[4] = { 8, 16, 32, 64 };
+            for (int i = 0; i < 4; ++i) {
+                if (inRect(s.rcWidthBtn[i], x, y)) {
+                    setType(hwnd, kWidths[i], s.isSigned);
+                    return 0;
+                }
+            }
+            for (int i = 0; i < 2; ++i) {
+                if (inRect(s.rcSignBtn[i], x, y)) {
+                    setType(hwnd, s.width, i == 1);
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                    return 0;
+                }
+            }
             for (int i = 0; i < 5; ++i) {
                 if (inRect(s.rcChip[i], x, y)) {
                     static const char* const kNames[5] = { "HEX", "OCT", "BIN", "DEC", "ALL" };
-                    copyBase(hwnd, i == 4 ? 'A' : "HODB"[i], kNames[i]);
+                    copyBase(hwnd, i == 4 ? 'A' : "HOBD"[i], kNames[i]);
                     return 0;
                 }
             }
