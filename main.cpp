@@ -215,6 +215,7 @@ winshun::Items bitsItems(const binlab::BitsEval& e, bool zh, bool editorOnEnter)
     const winshun::Json extra(winshun::Json::Object {
         {"valueHex", binlab::hexUpper(e.result, 64)},
         {"width", e.width},
+        {"signedType", e.signedType},
     });
     winshun::Items items;
     items.push_back(makeRow("bits.result.hex", r.hex + tr(zh, " · 十六进制", " · HEX"), context,
@@ -460,13 +461,20 @@ struct BinaryLab : winshun::Plugin {
                                       : a.text;
         const bool zh = chinese();
         if (a.action == "openEditor") {
+            const Settings st = readSettings(settings());
             const winshun::Json d = a.item["data"];
             binlab::EditorSpec spec;
+            spec.mode = binlab::EditorSpec::Mode::Bits;
             spec.value = std::strtoull(d["valueHex"].toString().c_str(), nullptr, 16);
-            spec.width = static_cast<int>(d["width"].toInt(32));
+            spec.width = static_cast<int>(d["width"].toInt(st.defaultWidth));
             if (spec.width <= 0 || spec.width > 64)
                 spec.width = 32;
-            spec.caption = a.text.empty() ? d["primary"].toString() : a.text;
+            spec.isSigned = d["signedType"].toBool();
+            // The expression line starts from the query text; the grid then
+            // operates on its live result.
+            spec.expression = a.text.empty() ? d["primary"].toString() : a.text;
+            spec.endian = st.defaultEndian;
+            spec.pack = st.defaultPack;
             spec.zh = zh;
             std::string error;
             if (!binlab::openEditorWindow(spec, error)) {
