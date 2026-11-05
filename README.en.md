@@ -1,0 +1,236 @@
+# Binary Lab (`ra9fael.binarylab`)
+
+> **English** · [简体中文（默认）](README.md)
+>
+> Win顺 ships an English UI, but the default documentation is Chinese.
+> `README.md` is the Chinese original; this file is its English counterpart.
+> The two are kept in sync and link to each other.
+
+A WinShun resident plugin for embedded work: parse `hex` / `bin` / `oct` strings,
+visualize bit operations, and compute C-like struct layout. Everything is a
+bounded, pure in-memory computation. The result rows and `preview.text` are
+rendered by the host, and the optional **interactive bit editor** opens its own
+window (only when you trigger it) so you can click bits, drag-paint, and copy
+the edited value in any base.
+
+## Install
+
+1. Download `ra9fael.binarylab-<version>.wsplugin` from the
+   [latest release](https://github.com/ra9fael/winshun-binarylab/releases/latest).
+   Optionally compare its SHA-256 with the `.sha256` file next to it
+   (`Get-FileHash <file> -Algorithm SHA256`).
+2. In Win顺 open **Settings → Plugins → Installed → Add plugin →
+   Archive (.zip / .wsplugin)** and pick the file. In the Chinese UI the same
+   path reads **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**.
+3. A plugin installed from a local package is **not enabled automatically**.
+   Turn it on in the list; enabling it is how you confirm its permissions
+   (see [Permissions](#permissions-and-data)).
+
+**Update:** install the newer `.wsplugin` the same way. Win顺 sees the same id,
+asks before replacing the old version, and keeps the plugin's data folder.
+
+**Uninstall:** remove it from **Settings → Plugins → Installed**
+(**设置 → 插件 → 已安装** in the Chinese UI).
+
+This plugin is a native exe, so it is not listed in Win顺's in-app plugin
+library (the community index accepts script plugins only). The releases of this
+repository are the only distribution channel.
+
+## Build from source
+
+Requirements: Windows 10/11 x64, CMake 3.21+, and either Visual Studio 2022 or
+later (MSVC) or MinGW-w64 GCC 13+. Python 3.10+ for packaging and the
+integration tests.
+
+```powershell
+cmake -S . -B build -A x64                 # MSVC; for MinGW use -G "MinGW Makefiles"
+cmake --build build --config Release       # writes binarylab.exe next to plugin.json
+ctest --test-dir build -C Release --output-on-failure
+python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
+```
+
+To run a local build inside Win顺 without packaging, and for tests and the
+release process, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Commands
+
+| Keyword | Example | What it does |
+|---|---|---|
+| `bits` | `bits u8 0xA5 & 0x0F` | HEX / BIN / OCT / DEC rows, `~ & \| ^ << >> rol ror`, field `get/set/clear/toggle`, bit grid in the hover preview |
+| `bytes` | `bytes hex u16le 34 12 78 56` | Normalize a byte stream, decode words by type and endianness, hexdump with offset and ASCII, IEEE-754 breakdown for floats |
+| `struct` | `struct pack=4 struct Frame { u8 sof; u32 seq; u16 len; u8 data[3]; };` | `sizeof` / `alignof`, member offsets, padding rows, a byte map, and copyable `static_assert` text |
+
+### `bits` syntax
+
+```
+bits [u8|u16|u32|u64|i8|i16|i32|i64] VALUE [OP VALUE]
+     OP       : & | ^ << >> rol ror
+     unary    : ~VALUE
+     raw bits : @0xFF          (reinterpret a bit pattern, e.g. i8 @0xFF = -1)
+     fields   : get|set|clear|toggle VALUE HIGH:LOW [VALUE]
+     literals : 0x… 0b… 0o… decimal, optional - sign for signed types, _ separators
+```
+
+Unsigned right shift is logical, signed right shift is arithmetic, `~` and all
+results are masked to the selected width, and `rol` / `ror` reduce the count
+modulo the width. A shift count `>= width` is an error; rotations are not.
+Literals are range-checked against the width and are never silently truncated.
+
+### `bytes` syntax
+
+```
+bytes [hex|bin|oct] [TYPE] DATA...
+TYPE : u8 i8 u16[le|be] i16[le|be] u32[le|be] i32[le|be]
+       u64[le|be] i64[le|be] f32[le|be] f64[le|be]
+```
+
+`u16` / `u32` / `u64` / `f32` / `f64` without a suffix use the `defaultEndian`
+setting; an explicit `le` / `be` always wins. Separators (`space , : ; _ -`)
+and `0x` / `0b` / `0o` prefixes are accepted. A compact hex token must have an
+even number of digits, a `bin` token exactly 8 bits, an `oct` token `000..377`.
+Input is capped at 16 KiB and 4096 decoded bytes. A trailing incomplete word is
+reported as such and is never given a fabricated value.
+
+### `struct` syntax
+
+```
+struct [pack=0|1|2|4|8|16] struct Name { MEMBER; ... };
+MEMBER : TYPE name [N];
+TYPE   : u8 i8 u16 i32 u64 f32 f64 | a previously defined named type
+       | struct [Name] { ... } name;   |  union [Name] { ... } name;
+       | struct Name name;             (reference to an earlier definition)
+```
+
+`pack=0` means natural alignment; the last definition in the query is the one
+laid out. Layout uses `align_up(offset, min(natural_align, pack))` for members
+and pads the tail to the struct's effective alignment. Bitfields, `int`,
+`long`, pointers, `size_t`, empty aggregates, duplicate member names,
+forward references and recursive types are rejected rather than guessed: those
+are ABI-dependent and would produce a confidently wrong answer.
+
+## Actions
+
+Actions are declared in a fixed order; **order**, not the `key` string, decides
+the keyboard mapping. For `bits` rows the editor is available, so `copyPrimary`
+and `openEditor` share Enter / Ctrl+Enter and `copyDetail` is reached from the
+host's action menu. The split is chosen by the `bitsEnter` setting.
+
+| Command | Enter | Ctrl+Enter | Shift+Enter | Menu (no key) |
+|---|---|---|---|---|
+| `bits` (default `bitsEnter=copy`) | `copyPrimary` — copy the row's main value | `openEditor` — open the interactive bit editor | `chainQuery` — fill the input box with a follow-up | `copyDetail` — copy full text |
+| `bits` (`bitsEnter=editor`) | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
+| `bytes` / `struct` | `copyPrimary` (struct summary expands members) | `copyDetail` | `chainQuery` | — |
+
+On a `struct` summary row Enter expands into one row per member/padding via
+`effects.replace` instead of copying.
+
+### Interactive bit editor
+
+Triggered from a `bits` result row (Ctrl+Enter by default, or Enter when
+`bitsEnter=editor`). The window is owned by the plugin and runs under the same
+strict sandbox as the rest of the plugin. Inside it:
+
+| Input | Effect |
+|---|---|
+| Click a bit cell | Toggle that bit |
+| Drag across cells | Paint them to the value of the first cell |
+| Arrow keys | Move the focus cell (Left/Right ±1, Up/Down ±8); the focused cell shows a yellow border |
+| Space | Toggle the focused bit |
+| Ctrl+C / B / D / O | Copy the value as HEX / BIN / DEC / OCT to the clipboard |
+| Esc | Close |
+
+The header shows the four bases live as you edit. The window lives on its own GUI
+thread; WinShun tears it down through the plugin destructor on shutdown.
+
+Queries have no side effects: they never delete files, start programs, change
+the clipboard, or open a window. Copy and `setQuery` effects are returned only
+when the user triggers an action. Typing `bits `, `bytes ` or `struct ` with no
+arguments shows three example rows (`valid: false`, Tab fills the example), and
+a parse failure shows one `valid: false` row with an error code and a corrected
+example.
+
+## Settings
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `defaultWidth` | choice | `32` | Width for `bits` when no type is written |
+| `defaultEndian` | choice | `le` | Endianness for types without an explicit `le` / `be` |
+| `defaultPack` | choice | `0` | `pack` for `struct` when `pack=N` is omitted |
+| `bitsEnter` | choice | `copy` | Which of copy / editor takes Enter on `bits` rows. `copy` (default) = Enter copies, Ctrl+Enter opens the editor; `editor` swaps them. |
+
+Settings are read from `initialize` and refreshed on `settingsChanged`; no
+secrets are involved.
+
+## Permissions and data
+
+`runtime.sandbox` is `strict`. Measured with `wsbench`: the plugin process runs
+at **LOW integrity, not elevated, inside a job object**. Since 0.2.0 the
+manifest declares two permissions, both required by the interactive bit editor
+and nothing else:
+
+| Permission | Why | Enforceable? |
+|---|---|---|
+| `ui` | The editor window (created only when the user triggers the `openEditor` action). | Partially — without it the job blocks desktop/USER handles, so the window could not exist. |
+| `clipboard:write` | The editor's copy button writes the edited value directly. The protocol has no plugin→host copy tool, so a host-mediated `copy` effect is not available from inside a window. | Yes. |
+
+Text-only use needs neither: queries and all other actions keep zero side
+effects (no files, no clipboard, no window). No `network`, `files:*`,
+`clipboard:read`, `processes`, `notifications`, `elevated`, `contentSearch`,
+`ai.expose` or `hostHotkeys` capability is declared.
+
+The plugin writes nothing to disk and does not use `WS_DATA_DIR`. If presets
+are added later, they belong in `WS_DATA_DIR` with atomic writes. Secrets must
+use the host's `password` setting type; none are used here. No user data is
+uploaded or sent anywhere: there are no network calls.
+
+## Build and runtime dependencies
+
+- Windows, WinShun with the C++ resident-plugin protocol (JSON-RPC 2.0, one
+  UTF-8 message per line on stdio).
+- A C++17 compiler. MSVC (static CRT, `/utf-8`) or MinGW-w64 (static
+  `-static` link) both work. No Qt, no third-party libraries, no runtime DLL.
+- `winshun.h` is copied byte-for-byte from `WinShun/src/plugins-sdk/winshun.h`
+  so the plugin is self-contained.
+- Build output goes straight into this folder because `plugin.json` names
+  `binarylab.exe` as `runtime.program`. Build commands: [Build from source](#build-from-source).
+
+## Verification
+
+See [TESTPLAN.md](TESTPLAN.md) for the full matrix and the measured results.
+Summary: 139/139 pure-logic assertions pass (including GCC `#pragma pack`
+`sizeof` / `alignof` / `offsetof` oracles), and the built plugin was driven
+through the real `WinShunPluginHost.exe` runner with `wsbench` for all three
+commands, empty input, invalid input, settings overrides and all three
+actions.
+
+What has **not** been verified: the actual WinShun GUI message log and hover
+panel, monospace alignment of `preview.text`, keyboard feel, and importing a packaged `.wsplugin` into a fresh profile.
+
+## Failure handling
+
+Parse errors, out-of-range literals, unsupported ABI constructs and size-cap
+violations return a single non-actionable row with a stable error code and a
+corrected example; no partial or invented result is returned. Missing
+dependencies do not exist (there are none), and there is no network to fail.
+All diagnostics go to stderr (`plugins.log`); stdout carries only JSON-RPC
+lines. `timeoutMs` is 1500; the slowest measured query at the 4096-byte cap
+was ~81 ms p95.
+
+## Distribution and versioning
+
+`runtime.program` is a native executable. The community repository's
+`plugin.schema.json` restricts `runtime.program` to interpreters and an
+official whitelist, and `CONTRIBUTING.md` excludes exe/DLL submissions, so
+this plugin is distributed from its **own repository as a `.wsplugin` package**
+that users import into WinShun (see [Install](#install)). Do not open a source
+PR against `WinShun-plugins`. `tools/package.py` builds the package from the
+git-tracked files plus the built `binarylab.exe`, so the `build/` tree, logs and
+anything untracked never ship. Bump `version` for every release; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Release history: [CHANGELOG.md](CHANGELOG.md).
+---
+
+[← 简体中文（默认）](README.md) · English

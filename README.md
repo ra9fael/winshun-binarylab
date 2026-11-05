@@ -1,74 +1,72 @@
-# Binary Lab (`ra9fael.binarylab`)
+# Binary Lab（`ra9fael.binarylab`）
 
-A WinShun resident plugin for embedded work: parse `hex` / `bin` / `oct` strings,
-visualize bit operations, and compute C-like struct layout. Everything is a
-bounded, pure in-memory computation. The result rows and `preview.text` are
-rendered by the host, and the optional **interactive bit editor** opens its own
-window (only when you trigger it) so you can click bits, drag-paint, and copy
-the edited value in any base.
+> **简体中文（默认）** · [English](README.en.md)
+>
+> Win顺 默认使用中文界面，也自带英文模式。因此中文说明放在 `README.md`，
+> 英文说明放在 `README.en.md`，两份内容保持一致，可互相跳转。
 
-## Install
+给嵌入式开发用的 Win顺 常驻插件：解析 `hex` / `bin` / `oct` 字符串、可视化位运算、
+计算 C 风格结构体布局。所有计算都是有界、纯内存的操作。结果行和 `preview.text`
+由宿主渲染；可选的**交互式位编辑器**只在被触发时打开自己的窗口，可点击置位、
+拖拽刷位，并以任意进制复制修改后的值。
 
-1. Download `ra9fael.binarylab-<version>.wsplugin` from the
-   [latest release](https://github.com/ra9fael/winshun-binarylab/releases/latest).
-   Optionally compare its SHA-256 with the `.sha256` file next to it
-   (`Get-FileHash <file> -Algorithm SHA256`).
-2. In Win顺 open **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**
-   and pick the file.
-3. A plugin installed from a local package is **not enabled automatically**.
-   Turn it on in the list; enabling it is how you confirm its permissions
-   (see [Permissions](#permissions-and-data)).
+## 安装
 
-**Update:** install the newer `.wsplugin` the same way. Win顺 sees the same id,
-asks before replacing the old version, and keeps the plugin's data folder.
+1. 从 [最新 Release](https://github.com/ra9fael/winshun-binarylab/releases/latest)
+   下载 `ra9fael.binarylab-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
+   SHA-256（`Get-FileHash <file> -Algorithm SHA256`）。
+2. 在 Win顺 里打开 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**，
+   选中该文件。
+3. 从本地安装包安装的插件**不会自动启用**。请在列表里打开开关；启用这一步就是你
+   在确认它申请的权限（见 [权限与数据](#权限与数据)）。
 
-**Uninstall:** remove it from **设置 → 插件 → 已安装**.
+**更新：** 用同样方式安装新版的 `.wsplugin`。Win顺 认出是同一个 id，会先询问是否
+替换旧版本，并保留插件的数据目录。
 
-This plugin is a native exe, so it is not listed in Win顺's in-app plugin
-library (the community index accepts script plugins only). The releases of this
-repository are the only distribution channel.
+**卸载：** 在 **设置 → 插件 → 已安装** 里移除。
 
-## Build from source
+本插件是原生 exe，不会出现在 Win顺 应用内的插件库里（社区索引只收脚本插件）。
+本仓库的 Release 是唯一的分发渠道。
 
-Requirements: Windows 10/11 x64, CMake 3.21+, and either Visual Studio 2022 or
-later (MSVC) or MinGW-w64 GCC 13+. Python 3.10+ for packaging and the
-integration tests.
+## 从源码构建
+
+环境要求：Windows 10/11 x64、CMake 3.21+，以及 Visual Studio 2022 及以上（MSVC）
+或 MinGW-w64 GCC 13+。打包和集成测试需要 Python 3.10+。
 
 ```powershell
-cmake -S . -B build -A x64                 # MSVC; for MinGW use -G "MinGW Makefiles"
-cmake --build build --config Release       # writes binarylab.exe next to plugin.json
+cmake -S . -B build -A x64                 # MSVC；MinGW 用 -G "MinGW Makefiles"
+cmake --build build --config Release       # 在 plugin.json 旁边生成 binarylab.exe
 ctest --test-dir build -C Release --output-on-failure
 python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
 ```
 
-To run a local build inside Win顺 without packaging, and for tests and the
-release process, see [CONTRIBUTING.md](CONTRIBUTING.md).
+本地构建如何直接在 Win顺 里运行，以及测试和发版流程，见
+[CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## Commands
+## 命令
 
-| Keyword | Example | What it does |
+| 关键词 | 示例 | 作用 |
 |---|---|---|
-| `bits` | `bits u8 0xA5 & 0x0F` | HEX / BIN / OCT / DEC rows, `~ & \| ^ << >> rol ror`, field `get/set/clear/toggle`, bit grid in the hover preview |
-| `bytes` | `bytes hex u16le 34 12 78 56` | Normalize a byte stream, decode words by type and endianness, hexdump with offset and ASCII, IEEE-754 breakdown for floats |
-| `struct` | `struct pack=4 struct Frame { u8 sof; u32 seq; u16 len; u8 data[3]; };` | `sizeof` / `alignof`, member offsets, padding rows, a byte map, and copyable `static_assert` text |
+| `bits` | `bits u8 0xA5 & 0x0F` | HEX / BIN / OCT / DEC 行，`~ & \| ^ << >> rol ror`，字段 `get/set/clear/toggle`，悬停预览里的位网格 |
+| `bytes` | `bytes hex u16le 34 12 78 56` | 归一化字节流，按类型和字节序解码字，带偏移和 ASCII 的 hexdump，浮点数的 IEEE-754 拆解 |
+| `struct` | `struct pack=4 struct Frame { u8 sof; u32 seq; u16 len; u8 data[3]; };` | `sizeof` / `alignof`、成员偏移、padding 行、字节图、可复制的 `static_assert` 文本 |
 
-### `bits` syntax
+### `bits` 语法
 
 ```
 bits [u8|u16|u32|u64|i8|i16|i32|i64] VALUE [OP VALUE]
      OP       : & | ^ << >> rol ror
      unary    : ~VALUE
-     raw bits : @0xFF          (reinterpret a bit pattern, e.g. i8 @0xFF = -1)
+     raw bits : @0xFF          (按位模式重新解释，例如 i8 @0xFF = -1)
      fields   : get|set|clear|toggle VALUE HIGH:LOW [VALUE]
-     literals : 0x… 0b… 0o… decimal, optional - sign for signed types, _ separators
+     literals : 0x… 0b… 0o… 十进制，有符号类型可带 - 号，_ 分隔符
 ```
 
-Unsigned right shift is logical, signed right shift is arithmetic, `~` and all
-results are masked to the selected width, and `rol` / `ror` reduce the count
-modulo the width. A shift count `>= width` is an error; rotations are not.
-Literals are range-checked against the width and are never silently truncated.
+无符号右移是逻辑右移，有符号右移是算术右移，`~` 和所有结果都按所选位宽掩码，
+`rol` / `ror` 的位数对位宽取模。移位位数 `>= width` 报错，循环移位不报错。
+字面量按位宽做范围检查，绝不静默截断。
 
-### `bytes` syntax
+### `bytes` 语法
 
 ```
 bytes [hex|bin|oct] [TYPE] DATA...
@@ -76,150 +74,136 @@ TYPE : u8 i8 u16[le|be] i16[le|be] u32[le|be] i32[le|be]
        u64[le|be] i64[le|be] f32[le|be] f64[le|be]
 ```
 
-`u16` / `u32` / `u64` / `f32` / `f64` without a suffix use the `defaultEndian`
-setting; an explicit `le` / `be` always wins. Separators (`space , : ; _ -`)
-and `0x` / `0b` / `0o` prefixes are accepted. A compact hex token must have an
-even number of digits, a `bin` token exactly 8 bits, an `oct` token `000..377`.
-Input is capped at 16 KiB and 4096 decoded bytes. A trailing incomplete word is
-reported as such and is never given a fabricated value.
+不带后缀的 `u16` / `u32` / `u64` / `f32` / `f64` 使用 `defaultEndian` 设置；
+显式写 `le` / `be` 时永远以它为准。接受分隔符（`space , : ; _ -`）和
+`0x` / `0b` / `0o` 前缀。紧凑 hex token 必须有偶数位，`bin` token 必须正好 8 位，
+`oct` token 必须在 `000..377` 之间。输入上限 16 KiB、解码后 4096 字节。
+末尾不完整的字会被如实报告，绝不编造一个值。
 
-### `struct` syntax
+### `struct` 语法
 
 ```
 struct [pack=0|1|2|4|8|16] struct Name { MEMBER; ... };
 MEMBER : TYPE name [N];
-TYPE   : u8 i8 u16 i32 u64 f32 f64 | a previously defined named type
+TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
        | struct [Name] { ... } name;   |  union [Name] { ... } name;
-       | struct Name name;             (reference to an earlier definition)
+       | struct Name name;             (引用前面的定义)
 ```
 
-`pack=0` means natural alignment; the last definition in the query is the one
-laid out. Layout uses `align_up(offset, min(natural_align, pack))` for members
-and pads the tail to the struct's effective alignment. Bitfields, `int`,
-`long`, pointers, `size_t`, empty aggregates, duplicate member names,
-forward references and recursive types are rejected rather than guessed: those
-are ABI-dependent and would produce a confidently wrong answer.
+`pack=0` 表示自然对齐；查询中最后一个定义才是被布局的那个。成员布局用
+`align_up(offset, min(natural_align, pack))`，尾部补齐到结构体的有效对齐。
+位域、`int`、`long`、指针、`size_t`、空聚合体、重复成员名、前向引用和递归类型
+一律拒绝而不是猜测：这些都是 ABI 相关的，猜了只会给出一个看起来很确定、
+其实是错的答案。
 
-## Actions
+## 动作
 
-Actions are declared in a fixed order; **order**, not the `key` string, decides
-the keyboard mapping. For `bits` rows the editor is available, so `copyPrimary`
-and `openEditor` share Enter / Ctrl+Enter and `copyDetail` is reached from the
-host's action menu. The split is chosen by the `bitsEnter` setting.
+动作按固定顺序声明；决定键盘映射的是**顺序**，不是 `key` 字符串。`bits` 行上
+编辑器可用，所以 `copyPrimary` 和 `openEditor` 共用 Enter / Ctrl+Enter，
+`copyDetail` 从宿主动作菜单进入。具体分配由 `bitsEnter` 设置决定。
 
-| Command | Enter | Ctrl+Enter | Shift+Enter | Menu (no key) |
+| 命令 | Enter | Ctrl+Enter | Shift+Enter | 菜单（无按键） |
 |---|---|---|---|---|
-| `bits` (default `bitsEnter=copy`) | `copyPrimary` — copy the row's main value | `openEditor` — open the interactive bit editor | `chainQuery` — fill the input box with a follow-up | `copyDetail` — copy full text |
-| `bits` (`bitsEnter=editor`) | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
-| `bytes` / `struct` | `copyPrimary` (struct summary expands members) | `copyDetail` | `chainQuery` | — |
+| `bits`（默认 `bitsEnter=copy`） | `copyPrimary` —— 复制该行主值 | `openEditor` —— 打开交互式位编辑器 | `chainQuery` —— 把后续查询填进输入框 | `copyDetail` —— 复制完整文本 |
+| `bits`（`bitsEnter=editor`） | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
+| `bytes` / `struct` | `copyPrimary`（struct 摘要会展开成员） | `copyDetail` | `chainQuery` | — |
 
-On a `struct` summary row Enter expands into one row per member/padding via
-`effects.replace` instead of copying.
+在 `struct` 摘要行按 Enter 会通过 `effects.replace` 展开成每个成员 / padding
+各一行，而不是复制。
 
-### Interactive bit editor
+### 交互式位编辑器
 
-Triggered from a `bits` result row (Ctrl+Enter by default, or Enter when
-`bitsEnter=editor`). The window is owned by the plugin and runs under the same
-strict sandbox as the rest of the plugin. Inside it:
+从 `bits` 结果行触发（默认 Ctrl+Enter，`bitsEnter=editor` 时为 Enter）。窗口由插件
+自己持有，与插件其余部分一样运行在 strict sandbox 下。窗口内：
 
-| Input | Effect |
+| 输入 | 效果 |
 |---|---|
-| Click a bit cell | Toggle that bit |
-| Drag across cells | Paint them to the value of the first cell |
-| Arrow keys | Move the focus cell (Left/Right ±1, Up/Down ±8); the focused cell shows a yellow border |
-| Space | Toggle the focused bit |
-| Ctrl+C / B / D / O | Copy the value as HEX / BIN / DEC / OCT to the clipboard |
-| Esc | Close |
+| 点击某个位格 | 翻转该位 |
+| 在格子上拖拽 | 刷成第一格的值 |
+| 方向键 | 移动焦点格（左右 ±1，上下 ±8）；焦点格显示黄色边框 |
+| Space | 翻转焦点位 |
+| Ctrl+C / B / D / O | 以 HEX / BIN / DEC / OCT 复制值到剪贴板 |
+| Esc | 关闭 |
 
-The header shows the four bases live as you edit. The window lives on its own GUI
-thread; WinShun tears it down through the plugin destructor on shutdown.
+编辑时标题栏实时显示四种进制。窗口运行在自己的 GUI 线程上；Win顺 关闭时通过
+插件析构函数销毁它。
 
-Queries have no side effects: they never delete files, start programs, change
-the clipboard, or open a window. Copy and `setQuery` effects are returned only
-when the user triggers an action. Typing `bits `, `bytes ` or `struct ` with no
-arguments shows three example rows (`valid: false`, Tab fills the example), and
-a parse failure shows one `valid: false` row with an error code and a corrected
-example.
+查询没有副作用：不删文件、不启动程序、不改剪贴板、不开窗口。复制和 `setQuery`
+效果只在用户触发动作时返回。只输入 `bits `、`bytes ` 或 `struct ` 而不带参数，
+会显示三行示例（`valid: false`，Tab 可填充示例）；解析失败会显示一行
+`valid: false`，带错误码和修正后的示例。
 
-## Settings
+## 设置
 
-| Key | Type | Default | Meaning |
+| 键 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
-| `defaultWidth` | choice | `32` | Width for `bits` when no type is written |
-| `defaultEndian` | choice | `le` | Endianness for types without an explicit `le` / `be` |
-| `defaultPack` | choice | `0` | `pack` for `struct` when `pack=N` is omitted |
-| `bitsEnter` | choice | `copy` | Which of copy / editor takes Enter on `bits` rows. `copy` (default) = Enter copies, Ctrl+Enter opens the editor; `editor` swaps them. |
+| `defaultWidth` | choice | `32` | 未写类型时 `bits` 的位宽 |
+| `defaultEndian` | choice | `le` | 未显式写 `le` / `be` 的类型的字节序 |
+| `defaultPack` | choice | `0` | 省略 `pack=N` 时 `struct` 的 pack |
+| `bitsEnter` | choice | `copy` | `bits` 行上复制 / 编辑器谁占用 Enter。`copy`（默认）= Enter 复制、Ctrl+Enter 打开编辑器；`editor` 反之。 |
 
-Settings are read from `initialize` and refreshed on `settingsChanged`; no
-secrets are involved.
+设置在 `initialize` 时读取，并在 `settingsChanged` 时刷新；不涉及任何密钥。
 
-## Permissions and data
+## 权限与数据
 
-`runtime.sandbox` is `strict`. Measured with `wsbench`: the plugin process runs
-at **LOW integrity, not elevated, inside a job object**. Since 0.2.0 the
-manifest declares two permissions, both required by the interactive bit editor
-and nothing else:
+`runtime.sandbox` 为 `strict`。用 `wsbench` 实测：插件进程运行在
+**LOW 完整性级别、未提权、置于 job object 内**。自 0.2.0 起 manifest 声明两个
+权限，二者都只服务于交互式位编辑器：
 
-| Permission | Why | Enforceable? |
+| 权限 | 原因 | 可否强制 |
 |---|---|---|
-| `ui` | The editor window (created only when the user triggers the `openEditor` action). | Partially — without it the job blocks desktop/USER handles, so the window could not exist. |
-| `clipboard:write` | The editor's copy button writes the edited value directly. The protocol has no plugin→host copy tool, so a host-mediated `copy` effect is not available from inside a window. | Yes. |
+| `ui` | 编辑器窗口（仅在用户触发 `openEditor` 动作时创建）。 | 部分 —— 没有它，job 会阻止 desktop / USER 句柄，窗口根本无法存在。 |
+| `clipboard:write` | 编辑器的复制按钮直接写入修改后的值。协议没有插件→宿主的复制工具，所以窗口内部拿不到宿主代劳的 `copy` 效果。 | 是。 |
 
-Text-only use needs neither: queries and all other actions keep zero side
-effects (no files, no clipboard, no window). No `network`, `files:*`,
-`clipboard:read`, `processes`, `notifications`, `elevated`, `contentSearch`,
-`ai.expose` or `hostHotkeys` capability is declared.
+纯文本用法两者都不需要：查询和其余动作保持零副作用（不碰文件、剪贴板、窗口）。
+未声明 `network`、`files:*`、`clipboard:read`、`processes`、`notifications`、
+`elevated`、`contentSearch`、`ai.expose`、`hostHotkeys` 能力。
 
-The plugin writes nothing to disk and does not use `WS_DATA_DIR`. If presets
-are added later, they belong in `WS_DATA_DIR` with atomic writes. Secrets must
-use the host's `password` setting type; none are used here. No user data is
-uploaded or sent anywhere: there are no network calls.
+插件不写磁盘，也不使用 `WS_DATA_DIR`。若以后加入预设，应放在 `WS_DATA_DIR`
+并采用原子写入。密钥必须使用宿主的 `password` 设置类型；这里没有用到。
+不上传任何用户数据：没有任何网络调用。
 
-## Build and runtime dependencies
+## 构建与运行时依赖
 
-- Windows, WinShun with the C++ resident-plugin protocol (JSON-RPC 2.0, one
-  UTF-8 message per line on stdio).
-- A C++17 compiler. MSVC (static CRT, `/utf-8`) or MinGW-w64 (static
-  `-static` link) both work. No Qt, no third-party libraries, no runtime DLL.
-- `winshun.h` is copied byte-for-byte from `WinShun/src/plugins-sdk/winshun.h`
-  so the plugin is self-contained.
-- Build output goes straight into this folder because `plugin.json` names
-  `binarylab.exe` as `runtime.program`. Build commands: [Build from source](#build-from-source).
+- Windows，支持 C++ 常驻插件协议的 Win顺（JSON-RPC 2.0，stdio 上每行一条 UTF-8 消息）。
+- C++17 编译器。MSVC（静态 CRT，`/utf-8`）或 MinGW-w64（静态 `-static` 链接）均可。
+  不用 Qt、不用第三方库、不需要运行时 DLL。
+- `winshun.h` 从 `WinShun/src/plugins-sdk/winshun.h` 逐字节复制，插件因此自包含。
+- 构建产物直接输出到本目录，因为 `plugin.json` 把 `binarylab.exe` 指定为
+  `runtime.program`。构建命令见 [从源码构建](#从源码构建)。
 
-## Verification
+## 验证
 
-See [TESTPLAN.md](TESTPLAN.md) for the full matrix and the measured results.
-Summary: 139/139 pure-logic assertions pass (including GCC `#pragma pack`
-`sizeof` / `alignof` / `offsetof` oracles), and the built plugin was driven
-through the real `WinShunPluginHost.exe` runner with `wsbench` for all three
-commands, empty input, invalid input, settings overrides and all three
-actions.
+完整矩阵和实测结果见 [TESTPLAN.md](TESTPLAN.md)。摘要：139/139 条纯逻辑断言通过
+（含 GCC `#pragma pack` 的 `sizeof` / `alignof` / `offsetof` 参照值），构建出的插件
+还用 `wsbench` 通过真实 `WinShunPluginHost.exe` runner 跑过三条命令、空输入、
+非法输入、设置覆盖和全部三种动作。
 
-What has **not** been verified: the actual WinShun GUI message log and hover
-panel, monospace alignment of `preview.text`, keyboard feel, and importing a packaged `.wsplugin` into a fresh profile.
+**尚未验证**：Win顺 GUI 的消息日志和悬停面板、`preview.text` 的等宽对齐、
+键盘手感，以及把打包好的 `.wsplugin` 导入全新配置。
 
-## Failure handling
+## 失败处理
 
-Parse errors, out-of-range literals, unsupported ABI constructs and size-cap
-violations return a single non-actionable row with a stable error code and a
-corrected example; no partial or invented result is returned. Missing
-dependencies do not exist (there are none), and there is no network to fail.
-All diagnostics go to stderr (`plugins.log`); stdout carries only JSON-RPC
-lines. `timeoutMs` is 1500; the slowest measured query at the 4096-byte cap
-was ~81 ms p95.
+解析错误、字面量越界、不支持的 ABI 构造、超出容量上限，都会返回一行不可操作的
+结果，带稳定错误码和修正后的示例；不返回部分结果或编造的结果。不存在缺失依赖
+（本来就没有），也没有可失败的网络。所有诊断信息走 stderr（`plugins.log`），
+stdout 只承载 JSON-RPC 行。`timeoutMs` 为 1500；在 4096 字节上限下实测最慢查询
+约 81 ms p95。
 
-## Distribution and versioning
+## 分发与版本
 
-`runtime.program` is a native executable. The community repository's
-`plugin.schema.json` restricts `runtime.program` to interpreters and an
-official whitelist, and `CONTRIBUTING.md` excludes exe/DLL submissions, so
-this plugin is distributed from its **own repository as a `.wsplugin` package**
-that users import into WinShun (see [Install](#install)). Do not open a source
-PR against `WinShun-plugins`. `tools/package.py` builds the package from the
-git-tracked files plus the built `binarylab.exe`, so the `build/` tree, logs and
-anything untracked never ship. Bump `version` for every release; see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+`runtime.program` 是原生可执行文件。社区仓库的 `plugin.schema.json` 把
+`runtime.program` 限制为解释器和官方白名单，`CONTRIBUTING.md` 也排除 exe / DLL
+提交，因此本插件由**自己的仓库以 `.wsplugin` 包分发**，用户导入 Win顺
+（见 [安装](#安装)）。不要向 `WinShun-plugins` 提源码 PR。
+`tools/package.py` 从 git 跟踪的文件加上构建好的 `binarylab.exe` 打包，
+所以 `build/`、日志和任何未跟踪内容都不会进入发布包。每次发布都要递增
+`version`；见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## License
+## 许可证
 
-MIT, see [LICENSE](LICENSE). Release history: [CHANGELOG.md](CHANGELOG.md).
+MIT，见 [LICENSE](LICENSE)。发布历史见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+简体中文（默认） · [English →](README.en.md)
