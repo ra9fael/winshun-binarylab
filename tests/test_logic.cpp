@@ -506,6 +506,152 @@ int main()
               "1e-6 is a third spelling of micro");
     }
 
+    // ---- the IEEE-754 container table ----------------------------------------
+    {
+        CHECK(binlab::floatNameList() == "f16 / f32 / f64", "the table advertises exactly its own rows");
+        bool consistent = true;
+        for (const binlab::FloatSpec& f : binlab::floatTable()) {
+            if (f.bits != f.expBits + f.mantBits + 1)
+                consistent = false;
+            if (f.bias != (1 << (f.expBits - 1)) - 1)
+                consistent = false;
+            if (f.digitsMin > f.digitsMax || f.digitsMax < 2)
+                consistent = false;
+            if (binlab::floatByBits(f.bits) != &f || binlab::floatByName(f.name) != &f)
+                consistent = false;
+            if (std::string(f.ieee) != std::string("binary") + std::to_string(f.bits))
+                consistent = false;
+        }
+        CHECK(consistent, "every row is self-consistent: layout, bias, name and lookup");
+        CHECK(binlab::floatByName("F32") != nullptr, "float prefixes are case-insensitive");
+        CHECK(binlab::floatByName("u32") == nullptr, "an integer name is not a float container");
+        CHECK(binlab::floatByBits(16) != nullptr && binlab::floatByBits(24) == nullptr,
+              "only table widths decode");
+
+        // S/E/M field boundaries come from the table, not from a per-width if.
+        const binlab::FloatSpec& h = *binlab::floatByName("f16");
+        CHECK(binlab::floatSegment(15, h) == 2 && binlab::floatSegment(14, h) == 1
+              && binlab::floatSegment(10, h) == 1 && binlab::floatSegment(9, h) == 0,
+              "binary16 splits as S=15 E=14..10 M=9..0");
+        const binlab::FloatSpec& s = *binlab::floatByName("f32");
+        CHECK(binlab::floatSegment(31, s) == 2 && binlab::floatSegment(30, s) == 1
+              && binlab::floatSegment(23, s) == 1 && binlab::floatSegment(22, s) == 0,
+              "binary32 splits as S=31 E=30..23 M=22..0");
+        const binlab::FloatSpec& d = *binlab::floatByName("f64");
+        CHECK(binlab::floatSegment(63, d) == 2 && binlab::floatSegment(62, d) == 1
+              && binlab::floatSegment(52, d) == 1 && binlab::floatSegment(51, d) == 0,
+              "binary64 splits as S=63 E=62..52 M=51..0");
+
+        CHECK(binlab::floatSpecialLabel(0x7E00, h) == "+NaN"
+              && binlab::floatSpecialLabel(0xFC00, h) == "-Infinity"
+              && binlab::floatSpecialLabel(0x8000, h) == "-zero"
+              && binlab::floatSpecialLabel(0x0001, h) == "subnormal"
+              && binlab::floatSpecialLabel(0x3E00, h).empty(),
+              "special values are named from their fields");
+    }
+
+    // ---- binary16: the generic encoder path ----------------------------------
+    {
+        bool ok = false;
+        CHECK(bitsOf("f16 1.5", ok) == 0x3E00 && ok, "f16 1.5 bit pattern");
+        CHECK(bitsOf("f16 0.1", ok) == 0x2E66 && ok, "f16 0.1 bit pattern");
+        CHECK(bitsOf("f16 3.0", ok) == 0x4200 && ok, "f16 3.0 bit pattern");
+        CHECK(bitsOf("f16 -2.0", ok) == 0xC000 && ok, "f16 -2.0 keeps the sign");
+        CHECK(bitsOf("f16 0.5", ok) == 0x3800 && ok, "f16 0.5 bit pattern");
+        CHECK(bitsOf("f16 65504.0", ok) == 0x7BFF && ok, "f16 largest finite");
+        CHECK(bitsOf("f16 65520.0", ok) == 0x7C00 && ok, "f16 at the tie rounds past the top");
+        CHECK(bitsOf("f16 65519.0", ok) == 0x7BFF && ok, "f16 below the tie stays finite");
+        CHECK(bitsOf("f16 6.103515625e-5", ok) == 0x0400 && ok, "f16 smallest normal");
+        CHECK(bitsOf("f16 5.9604644775390625e-8", ok) == 0x0001 && ok, "f16 smallest subnormal");
+        CHECK(bitsOf("f16 1e-6", ok) == 0x0011 && ok, "f16 subnormal 1e-6");
+        CHECK(bitsOf("f16 -0.0", ok) == 0x8000 && ok, "f16 negative zero keeps its sign");
+        CHECK(bitsOf("f16 Inf", ok) == 0x7C00 && ok, "f16 infinity");
+        CHECK(bitsOf("f16 0x3E00", ok) == 0x3E00 && ok, "f16 accepts a raw pattern");
+
+        const auto infNote = binlab::evalBits("f16 1e30", 32, false);
+        CHECK(infNote.success && infNote.value.floatNote.find("beyond binary16") != std::string::npos
+              && infNote.value.floatNote.find("+Inf") != std::string::npos,
+              "overflow says so instead of pretending to be a number");
+        const auto zeroNote = binlab::evalBits("f16 1e-8", 32, false);
+        CHECK(zeroNote.success && zeroNote.value.floatNote.find("smallest binary16") != std::string::npos,
+              "underflow to zero says so");
+        CHECK(errorCode(binlab::evalBits("f64 1e30", 32, false)) == std::string(),
+              "binary64 has no overflow to report here");
+        CHECK(binlab::evalBits("f64 1e30", 32, false).value.floatNote.empty(),
+              "an in-range value carries no range note");
+
+        // Round-half-to-even at an exact midpoint, both directions.
+        const binlab::FloatSpec& h = *binlab::floatByName("f16");
+        CHECK(binlab::floatFromDouble(1365.5 / 4096.0, h) == 0x3556,
+              "a mantissa tie picks the even field (up)");
+        CHECK(binlab::floatFromDouble(1364.5 / 4096.0, h) == 0x3554,
+              "a mantissa tie picks the even field (down)");
+        CHECK(binlab::floatFromDouble(0.5 / 16777216.0, h) == 0x0000,
+              "a subnormal tie picks zero");
+        CHECK(binlab::floatFromDouble(1.5 / 16777216.0, h) == 0x0002,
+              "a subnormal tie picks the even field");
+
+        // Every stored pattern must survive decode -> encode, and its printed
+        // text must encode back to itself: the bijection catches a broken
+        // exponent carry, a wrong bias or an off-by-one in the field masks.
+        bool patternRt = true;
+        bool textRt = true;
+        for (long p = 0; p < 0x10000; ++p) {
+            const std::uint64_t raw = static_cast<std::uint64_t>(p);
+            const auto fields = binlab::floatFields(raw, h);
+            if (fields.nan || fields.inf)
+                continue;
+            if (binlab::floatFromDouble(binlab::floatToDouble(raw, h), h) != raw)
+                patternRt = false;
+            if (binlab::floatFromDouble(std::strtod(binlab::exactFloatText(raw, h).c_str(), nullptr), h)
+                != raw)
+                textRt = false;
+        }
+        CHECK(patternRt, "every finite binary16 pattern round-trips through the encoder");
+        CHECK(textRt, "the shortest decimal text always encodes back to its own pattern");
+        const auto f16Text = binlab::evalBits("f16 0.1", 32, false);
+        CHECK(f16Text.success && f16Text.value.floatText == "0.1" && f16Text.value.typeName == "f16",
+              "f16 prints the shortest round-tripping text");
+        const auto f16Detail = binlab::evalBits("f16 1.5", 32, false);
+        CHECK(f16Detail.success && f16Detail.value.detail.find("IEEE-754 binary16") != std::string::npos,
+              "the breakdown names binary16");
+
+        // bytes words read the same table, so f16 is a two-byte word now.
+        const auto h16 = binlab::evalBytes("hex f16le 00 3E", "le");
+        CHECK(h16.success && !h16.value.words.empty() && h16.value.words[0].primary == "1.5",
+              "bytes f16le decodes 1.5");
+        const auto h16be = binlab::evalBytes("hex f16be 3E 00", "le");
+        CHECK(h16be.success && !h16be.value.words.empty() && h16be.value.words[0].primary == "1.5",
+              "bytes f16be decodes 1.5");
+        CHECK(binlab::evalBytes("hex f16le 00 3E", "le").value.typeName == "f16le",
+              "the word type name keeps the endian suffix");
+    }
+
+    // ---- a float name the table lacks gets a real error ---------------------
+    {
+        static const char* const kBad[] = { "f128", "bf16", "bf32", "f8", "f96", "ld", "quad" };
+        bool honest = true;
+        for (const char* token : kBad) {
+            const std::string expr = std::string(token) + " 1.5";
+            const auto r = binlab::evalBits(expr, 32, false);
+            if (errorCode(r) != "E_FLOAT_TYPE" || r.failure.hint.find("f16 / f32 / f64") == std::string::npos)
+                honest = false;
+        }
+        CHECK(honest, "unsupported float prefixes name the supported list, not a bogus digit");
+        const auto old = binlab::evalBits("f128 1.5", 32, false);
+        CHECK(!old.success && old.failure.message.find("f128") != std::string::npos,
+              "the error quotes the spelling the user typed");
+        const auto bytesBad = binlab::evalBytes("hex f128le 00 00 00 00 00 00 00 00", "le");
+        CHECK(!bytesBad.success && bytesBad.failure.code == "E_FLOAT_TYPE",
+              "bytes rejects the same spelling honestly");
+        CHECK(errorCode(binlab::evalBits("f 1.5", 32, false)) != "E_FLOAT_TYPE",
+              "a bare 'f' is a syntax problem, not a float type");
+        CHECK(errorCode(binlab::evalBits("fle 1.5", 32, false)) != "E_FLOAT_TYPE",
+              "an empty digit run is a typo, not a float type");
+        CHECK(errorCode(binlab::evalBits("f9999 1.5", 32, false)) != "E_FLOAT_TYPE",
+              "an absurd width is treated as a typo, not a container");
+    }
+
     std::cout << "binarylab logic tests: " << (g_total - g_failed) << "/" << g_total << " passed\n";
     if (g_failed)
         std::cerr << g_failed << " test(s) failed\n";

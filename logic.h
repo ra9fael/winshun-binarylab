@@ -279,45 +279,251 @@ inline std::string typeNameFor(int width, bool signedType)
     return std::string(signedType ? "i" : "u") + std::to_string(width);
 }
 
+// ---- IEEE-754 container table ---------------------------------------------
+//
+// The one place that knows how a float is laid out. The literal encoder, the
+// bit-grid band, the workbench composition bar and the bytes word decoder all
+// read these rows, so a new container is a row here instead of a fresh `if` in
+// every consumer. `native` names the C type whose compiler conversion is exact
+// enough to use directly; the containers without one go through the generic
+// frexp/rint path below, which is correct for any layout narrower than double.
+struct FloatSpec {
+    const char* name;   // expression prefix, "f16"
+    const char* ieee;   // standard name, "binary16"
+    int bits;
+    int expBits;
+    int mantBits;       // stored bits; the leading 1 is implicit
+    int bias;
+    int digitsMin;      // decimal precision floor for a readable round-trip
+    int digitsMax;      // precision guaranteed to round-trip every value
+    const char* native; // "float" / "double", or nullptr
+};
+
+inline const std::vector<FloatSpec>& floatTable()
+{
+    // digitsMax = ceil(1 + mantBits * log10 2): 5 / 9 / 17 significant digits.
+    // digitsMin keeps the shortest round-trip readable: precision 1 would print
+    // 1000000 as "1e+06", so probing starts no lower than this.
+    static const std::vector<FloatSpec> kFloats = {
+        { "f16", "binary16", 16, 5, 10, 15, 3, 5, nullptr },
+        { "f32", "binary32", 32, 8, 23, 127, 6, 9, "float" },
+        { "f64", "binary64", 64, 11, 52, 1023, 6, 17, "double" },
+    };
+    return kFloats;
+}
+
+inline const FloatSpec* floatByName(const std::string& token)
+{
+    const std::string s = lower(token);
+    for (const FloatSpec& f : floatTable())
+        if (s == f.name)
+            return &f;
+    return nullptr;
+}
+
+inline const FloatSpec* floatByBits(int bits)
+{
+    for (const FloatSpec& f : floatTable())
+        if (f.bits == bits)
+            return &f;
+    return nullptr;
+}
+
+// "f16 / f32 / f64", built from the table so a hint can never advertise a
+// container the table does not have.
+inline std::string floatNameList()
+{
+    std::string out;
+    for (const FloatSpec& f : floatTable())
+        out += (out.empty() ? "" : " / ") + std::string(f.name);
+    return out;
+}
+
+inline bool isSupportedFloat(const std::string& token)
+{
+    return floatByName(token) != nullptr;
+}
+
+// A float spelling that exists in the wild but not in this table. Recognising
+// the shape is what makes the error honest: before this, "f128 1.5" fell
+// through to the integer path and answered "invalid digit for the base".
+inline bool unsupportedFloatName(const std::string& token, std::string& spelling)
+{
+    const std::string t = lower(token);
+    if (isSupportedFloat(t))
+        return false;
+    // bytes carries an endian suffix that says nothing about the container.
+    std::string s = t;
+    if (s.size() > 2 && (s.compare(s.size() - 2, 2, "le") == 0 || s.compare(s.size() - 2, 2, "be") == 0))
+        s = s.substr(0, s.size() - 2);
+    if (floatByName(s) != nullptr)
+        return false;
+    static const std::set<std::string> kAliases = {
+        "bf16", "bf32", "fp8", "f8", "f128", "f96", "quad", "ld", "ldbl", "longdouble", "float128"
+    };
+    if (kAliases.count(s) != 0) {
+        spelling = t;
+        return true;
+    }
+    // f<N> / bf<N> with a plausible bit count: a float type, just not one we
+    // implement. Absurd widths are typos, so leave those to the syntax error.
+    std::size_t i = 0;
+    if (s.size() > 1 && s[0] == 'f')
+        i = 1;
+    else if (s.size() > 2 && s.compare(0, 2, "bf") == 0)
+        i = 2;
+    else
+        return false;
+    std::string digits;
+    for (; i < s.size(); ++i) {
+        if (std::isdigit(static_cast<unsigned char>(s[i])) == 0)
+            return false;
+        digits += s[i];
+    }
+    if (digits.empty())
+        return false;
+    // Accumulated by hand: an unbounded "f99999999999999999999" must not throw
+    // out of a header that promises no exceptions across its public API.
+    int n = 0;
+    for (char c : digits) {
+        n = n * 10 + (c - '0');
+        if (n > 256)
+            return false; // an absurd width is a typo, so leave it to the syntax error
+    }
+    if (n <= 0)
+        return false;
+    spelling = t;
+    return true;
+}
+
+// Split a stored pattern into its sign / exponent / mantissa fields.
+struct FloatFields {
+    std::uint64_t sign = 0;
+    std::uint64_t exp = 0;
+    std::uint64_t mant = 0;
+    bool nan = false;
+    bool inf = false;
+    bool subnormal = false; // exponent field all zeros, mantissa nonzero
+};
+
+inline FloatFields floatFields(std::uint64_t raw, const FloatSpec& f)
+{
+    FloatFields o;
+    const std::uint64_t expMask = (1ull << f.expBits) - 1;
+    o.sign = (raw >> (f.bits - 1)) & 1u;
+    o.exp = (raw >> f.mantBits) & expMask;
+    o.mant = raw & ((1ull << f.mantBits) - 1);
+    o.nan = o.exp == expMask && o.mant != 0;
+    o.inf = o.exp == expMask && o.mant == 0;
+    o.subnormal = o.exp == 0 && o.mant != 0;
+    return o;
+}
+
+// Which field a bit index belongs to: 0 = mantissa, 1 = exponent, 2 = sign.
+inline int floatSegment(int bit, const FloatSpec& f)
+{
+    if (bit == f.bits - 1)
+        return 2;
+    return bit >= f.mantBits ? 1 : 0;
+}
+
+// Decode to the nearest double. Exact for every container in the table,
+// because binary16 and binary32 both fit in binary64.
+inline double floatToDouble(std::uint64_t raw, const FloatSpec& f)
+{
+    if (f.native && std::strcmp(f.native, "double") == 0) {
+        double d = 0;
+        std::memcpy(&d, &raw, sizeof d);
+        return d;
+    }
+    if (f.native && std::strcmp(f.native, "float") == 0) {
+        const std::uint32_t low = static_cast<std::uint32_t>(raw & 0xFFFFFFFFu);
+        float v = 0;
+        std::memcpy(&v, &low, sizeof v);
+        return static_cast<double>(v);
+    }
+    const FloatFields g = floatFields(raw, f);
+    const double sign = g.sign ? -1.0 : 1.0;
+    if (g.nan)
+        return std::numeric_limits<double>::quiet_NaN();
+    if (g.inf)
+        return sign * std::numeric_limits<double>::infinity();
+    if (g.exp == 0)
+        return std::ldexp(sign * static_cast<double>(g.mant), 1 - f.bias - f.mantBits);
+    return std::ldexp(sign * static_cast<double>(g.mant + (1ull << f.mantBits)),
+                      static_cast<int>(g.exp) - f.bias - f.mantBits);
+}
+
+// Encode with round-half-to-even, the IEEE default. Scaling by a power of two
+// through std::ldexp is exact, so std::rint sees the true tie instead of a
+// double-rounded approximation, and an overflowed mantissa carry lands on the
+// all-ones exponent with a zero field - infinity, which is what ties-to-even
+// prescribes past the largest finite value.
+inline std::uint64_t floatFromDouble(double value, const FloatSpec& f)
+{
+    if (f.native && std::strcmp(f.native, "double") == 0) {
+        std::uint64_t raw = 0;
+        std::memcpy(&raw, &value, sizeof raw);
+        return raw;
+    }
+    if (f.native && std::strcmp(f.native, "float") == 0) {
+        const float v = static_cast<float>(value);
+        std::uint32_t low = 0;
+        std::memcpy(&low, &v, sizeof low);
+        return low;
+    }
+    const std::uint64_t sign = std::signbit(value) ? (1ull << (f.bits - 1)) : 0;
+    const std::uint64_t expMask = (1ull << f.expBits) - 1;
+    const std::uint64_t implicit = 1ull << f.mantBits;
+    if (std::isnan(value))
+        return sign | (expMask << f.mantBits) | (implicit >> 1); // quiet NaN
+    const double a = std::fabs(value);
+    if (a == 0.0 || std::isinf(a))
+        return sign | (std::isinf(a) ? (expMask << f.mantBits) : 0);
+    int e = 0;
+    std::frexp(a, &e); // a = m * 2^e with m in [0.5, 1): the stored exponent is e - 1
+    const int emin = 1 - f.bias;
+    const int emax = f.bias;
+    if (e - 1 > emax)
+        return sign | (expMask << f.mantBits); // already past the largest finite
+    if (e - 1 < emin) {
+        // Subnormal: the whole field is the mantissa, scaled by its quantum
+        // 2^(emin - mantBits).
+        const std::uint64_t k = static_cast<std::uint64_t>(std::rint(std::ldexp(a, f.mantBits - emin)));
+        if (k >= implicit)
+            return sign | (1ull << f.mantBits); // rounded up to the smallest normal
+        return sign | k;
+    }
+    const std::uint64_t m = static_cast<std::uint64_t>(std::rint(std::ldexp(a, f.mantBits - (e - 1))));
+    if (m >= implicit * 2) {
+        // The mantissa carried: the next exponent up, and if that leaves the
+        // normal range the all-ones field with a zero mantissa is infinity.
+        const std::uint64_t field = static_cast<std::uint64_t>(e + f.bias) << f.mantBits;
+        return sign | field;
+    }
+    const std::uint64_t field = static_cast<std::uint64_t>(e - 1 + f.bias) << f.mantBits;
+    return sign | field | (m - implicit);
+}
+
 // Shortest decimal text that round-trips back to the same IEEE-754 bit pattern.
 // Used for the FLOAT chip / DEC row so 0.1 stays "0.1" instead of the noisy
 // 17-digit expansion, while unusual values still get enough digits.
-inline std::string exactFloatText(std::uint64_t bits, bool isDouble)
+inline std::string exactFloatText(std::uint64_t raw, const FloatSpec& f)
 {
-    if (isDouble) {
-        double v = 0;
-        std::memcpy(&v, &bits, sizeof v);
-        if (std::isnan(v))
-            return "NaN";
-        if (std::isinf(v))
-            return v > 0 ? "+Inf" : "-Inf";
-        for (int p : {6, 9, 12, 15, 17}) {
-            std::ostringstream o;
-            o << std::setprecision(p) << v;
-            const std::string s = o.str();
-            if (std::strtod(s.c_str(), nullptr) == v)
-                return s;
-        }
-        std::ostringstream o;
-        o << std::setprecision(17) << v;
-        return o.str();
-    }
-    float f = 0;
-    const std::uint32_t low = static_cast<std::uint32_t>(bits & 0xFFFFFFFFu);
-    std::memcpy(&f, &low, sizeof f);
-    if (std::isnan(f))
+    const double v = floatToDouble(raw, f);
+    if (std::isnan(v))
         return "NaN";
-    if (std::isinf(f))
-        return f > 0 ? "+Inf" : "-Inf";
-    for (int p : {6, 7, 8, 9}) {
+    if (std::isinf(v))
+        return v > 0 ? "+Inf" : "-Inf";
+    for (int p = f.digitsMin; p < f.digitsMax; ++p) {
         std::ostringstream o;
-        o << std::setprecision(p) << static_cast<double>(f);
+        o << std::setprecision(p) << v;
         const std::string s = o.str();
-        if (static_cast<float>(std::strtod(s.c_str(), nullptr)) == f)
+        if (floatFromDouble(std::strtod(s.c_str(), nullptr), f) == raw)
             return s;
     }
     std::ostringstream o;
-    o << std::setprecision(9) << static_cast<double>(f);
+    o << std::setprecision(f.digitsMax) << v;
     return o.str();
 }
 
@@ -406,13 +612,15 @@ inline bool isBareUnitToken(const std::string& t)
     return false;
 }
 
-// Extra information about a parsed literal. `requestFloatWidth` is an input;
-// the remaining fields are outputs.
+// Extra information about a parsed literal. `requestFloatWidth` is an input
+// (the container asked for by a float prefix; it keys floatByBits()); the
+// remaining fields are outputs.
 struct LiteralInfo {
     bool isFloat = false;
     int floatWidth = 64;
     int requestFloatWidth = 64;
     std::string floatText;
+    std::string floatNote;  // set when the value left its container's range
     std::string unitNote;
     bool hasUnit = false;
 };
@@ -424,8 +632,8 @@ struct LiteralOptions {
 
 // Defined below, after the bytes helpers; evalBits() needs them for the
 // FLOAT readout and the S/E/M breakdown in detail/preview.
-inline std::string formatFloat(std::uint64_t raw, bool isDouble);
-inline std::string floatBreakdown(std::uint64_t raw, bool isDouble);
+inline std::string formatFloat(std::uint64_t raw, const FloatSpec& f);
+inline std::string floatBreakdown(std::uint64_t raw, const FloatSpec& f);
 
 inline std::string bitGrid(int width, std::uint64_t lhs, std::uint64_t rhs,
                            const std::string& op, std::uint64_t result, bool hasRhs)
@@ -560,26 +768,30 @@ inline Outcome<std::uint64_t> parseLiteral(const std::string& tokenIn, int width
             d *= unit->scale;
 
         const int fw = info != nullptr ? info->requestFloatWidth : 64;
-        const bool isDouble = fw != 32;
-        std::uint64_t bits = 0;
-        if (isDouble) {
-            std::memcpy(&bits, &d, sizeof bits);
-        } else {
-            const float f = static_cast<float>(d);
-            std::uint32_t low = 0;
-            std::memcpy(&low, &f, sizeof low);
-            bits = low;
-        }
+        const FloatSpec& fs = *floatByBits(fw);
+        const std::uint64_t bits = floatFromDouble(d, fs);
         if (info != nullptr) {
             info->isFloat = true;
-            info->floatWidth = fw;
-            info->floatText = exactFloatText(bits, isDouble);
+            info->floatWidth = fs.bits;
+            info->floatText = exactFloatText(bits, fs);
             info->hasUnit = unit != nullptr;
             const std::string spelled = clean + (unit != nullptr ? unit->suffix : "");
             if (unit != nullptr)
                 info->unitNote = spelled + " = " + clean + " x " + unit->note + " = " + info->floatText;
             else
-                info->unitNote = std::string("IEEE-754 binary") + (isDouble ? "64" : "32") + " bit pattern";
+                info->unitNote = std::string("IEEE-754 ") + fs.ieee + " bit pattern";
+            // A value that leaves the container still has to be reported
+            // honestly: binary16 turns 1e30 into +Inf and 1e-9 into zero, and
+            // a silent round-trip would read as a bug in the encoder.
+            const double back = floatToDouble(bits, fs);
+            if (std::isfinite(d) && !std::isfinite(back))
+                info->floatNote = std::string(fs.name) + " range: " + spelled
+                    + " is beyond " + fs.ieee + " and encodes as "
+                    + (std::signbit(back) ? "-Inf" : "+Inf");
+            else if (d != 0.0 && back == 0.0)
+                info->floatNote = std::string(fs.name) + " range: " + spelled
+                    + " is below the smallest " + fs.ieee + " subnormal and encodes as "
+                    + (std::signbit(back) ? "-0" : "0");
         }
         return Outcome<std::uint64_t>::good(bits);
     }
@@ -698,16 +910,8 @@ inline bool isBitsType(const std::string& t, int& width, bool& signedType)
     return true;
 }
 
-// IEEE-754 type prefixes. Float literals produce bit patterns, not float
-// arithmetic: operations on them are deliberately rejected by evalBits().
-inline bool isFloatType(const std::string& t, int& width)
-{
-    const std::string s = lower(t);
-    if (s == "f32") { width = 32; return true; }
-    if (s == "f64") { width = 64; return true; }
-    return false;
-}
-
+// IEEE-754 type prefixes come from floatTable() above; a float literal is a
+// bit pattern, never an operand, so evalBits() rejects arithmetic on it.
 struct BitsEval {
     int width = 32;
     bool signedType = false;
@@ -723,6 +927,7 @@ struct BitsEval {
     std::string chain;
     bool isFloat = false;        // DEC row shows floatText instead of the integer
     std::string floatText;       // shortest round-tripping decimal text
+    std::string floatNote;       // container range exceeded, e.g. "f16 range: ..."
     std::string unitNote;        // e.g. "4M = 4 x 10^6 = 4000000"
 };
 
@@ -1430,19 +1635,29 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
     e.width = defaultWidth;
     e.signedType = defaultSigned;
     e.typeName = typeNameFor(defaultWidth, defaultSigned);
-    int floatWidth = 64;
+    const FloatSpec* floatSpec = floatByName(tokens[0]);
+    const int floatWidth = floatSpec != nullptr ? floatSpec->bits : 64;
     bool explicitIntType = false;
     std::size_t at = 0;
-    if (isFloatType(tokens[0], floatWidth)) {
-        e.width = floatWidth;
+    if (floatSpec != nullptr) {
+        e.width = floatSpec->bits;
         e.signedType = false;
-        e.typeName = lower(tokens[0]);
+        e.typeName = floatSpec->name;
         e.isFloat = true;
         ++at;
     } else if (isBitsType(tokens[0], e.width, e.signedType)) {
         e.typeName = typeNameFor(e.width, e.signedType);
         explicitIntType = true;
         ++at;
+    } else {
+        // A float spelling the table does not implement must not fall through
+        // to the integer path, where "f128 1.5" answers "invalid digit for the
+        // base" and sends the user hunting for a typo that is not there.
+        std::string spelling;
+        if (unsupportedFloatName(tokens[0], spelling))
+            return failWith<BitsEval>(fail("E_FLOAT_TYPE",
+                spelling + " is not a float container this tool implements",
+                "use " + floatNameList() + ", e.g. bits f16 1.5"));
     }
     if (at >= tokens.size())
         return failWith<BitsEval>(fail("E_EMPTY", "no expression after the type", hint));
@@ -1462,7 +1677,7 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
         // A float type prefix with a raw bit-pattern operand (f32 0x3FC00000)
         // has no parsed float text, so decode the result itself.
         if (e.isFloat && e.floatText.empty())
-            e.floatText = exactFloatText(e.result, e.width == 64);
+            e.floatText = exactFloatText(e.result, *floatByBits(e.width));
         const Repr r = represent(e.result, e.width, e.signedType);
         const std::string decText = e.isFloat ? e.floatText : r.dec;
         std::ostringstream d;
@@ -1472,7 +1687,9 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
           << "grouped " << binGrouped(e.result, e.width) << "\n" << note << "\n";
         if (e.isFloat) {
             d << "FLOAT " << e.floatText << "\n"
-              << floatBreakdown(e.result, e.width == 64);
+              << floatBreakdown(e.result, *floatByBits(e.width));
+            if (!e.floatNote.empty())
+                d << e.floatNote << "\n";
         }
         if (!e.unitNote.empty())
             d << "unit " << e.unitNote << "\n";
@@ -1484,6 +1701,8 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
           << "HEX " << r.hex << "  BIN " << r.bin << "  OCT " << r.oct << "  DEC " << decText << "\n";
         if (e.isFloat)
             p << "FLOAT " << e.floatText << "\n";
+        if (!e.floatNote.empty())
+            p << e.floatNote << "\n";
         if (!e.unitNote.empty())
             p << "unit " << e.unitNote << "\n";
         e.preview = p.str();
@@ -1582,7 +1801,8 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
             e.signedType = false;
             e.isFloat = true;
             e.floatText = li.floatText;
-            e.typeName = li.floatWidth == 32 ? "f32" : "f64";
+            e.floatNote = li.floatNote;
+            e.typeName = floatByBits(e.width)->name;
         }
         e.unitNote = li.unitNote;
         return finish(a.value, a.value, a.value, false, "value", hexUpper(a.value, e.width),
@@ -1717,35 +1937,29 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
 struct TypeSpec {
     std::string name;
     int size = 1;
-    bool isFloat = false;
+    const FloatSpec* flt = nullptr; // set for f16/f32/f64 words
     bool signedType = false;
     bool big = false;
 };
 
+// A bytes word type is either an integer name from isBitsType() or a float
+// container from floatTable(), with an optional le/be suffix. There is
+// deliberately no third list of widths here: the two tables are the source.
 inline bool resolveType(const std::string& token, const std::string& defaultEndian, TypeSpec& out)
 {
     const std::string t = lower(token);
-    const bool defaultBig = defaultEndian == "be";
     std::string base = t;
-    out.big = defaultBig;
+    out.big = defaultEndian == "be";
     if (t.size() > 2 && (t.compare(t.size() - 2, 2, "le") == 0 || t.compare(t.size() - 2, 2, "be") == 0)) {
         out.big = t.compare(t.size() - 2, 2, "be") == 0;
         base = t.substr(0, t.size() - 2);
     }
-    out.signedType = !base.empty() && base[0] == 'i';
-    out.isFloat = !base.empty() && base[0] == 'f';
+    out.flt = floatByName(base);
+    out.signedType = false;
     int width = 0;
-    if (base == "u8" || base == "i8")
-        width = 8;
-    else if (base == "u16" || base == "i16" || base == "f32")
-        width = base == "f32" ? 32 : 16;
-    else if (base == "u32" || base == "i32" || base == "f64")
-        width = base == "f64" ? 64 : 32;
-    else if (base == "u64" || base == "i64")
-        width = 64;
-    else if (base == "f16")
-        return false; // half precision is deliberately not supported
-    else
+    if (out.flt != nullptr)
+        width = out.flt->bits;
+    else if (!isBitsType(base, width, out.signedType))
         return false;
     out.size = width / 8;
     if (out.size == 1)
@@ -1833,47 +2047,45 @@ inline std::string hexDump(const std::vector<std::uint8_t>& data, std::size_t ma
     return out.str();
 }
 
-inline std::string formatFloat(std::uint64_t raw, bool isDouble)
+inline std::string formatFloat(std::uint64_t raw, const FloatSpec& f)
 {
+    const double v = floatToDouble(raw, f);
+    if (std::isnan(v))
+        return "NaN";
+    if (std::isinf(v))
+        return v > 0 ? "+Inf" : "-Inf";
     std::ostringstream out;
-    if (isDouble) {
-        double v = 0;
-        std::memcpy(&v, &raw, sizeof v);
-        if (std::isnan(v))
-            return "NaN";
-        if (std::isinf(v))
-            return v > 0 ? "+Inf" : "-Inf";
-        out << std::setprecision(17) << v;
-    } else {
-        float v = 0;
-        const std::uint32_t low = static_cast<std::uint32_t>(raw & 0xFFFFFFFFu);
-        std::memcpy(&v, &low, sizeof v);
-        if (std::isnan(v))
-            return "NaN";
-        if (std::isinf(v))
-            return v > 0 ? "+Inf" : "-Inf";
-        out << std::setprecision(9) << static_cast<double>(v);
-    }
+    out << std::setprecision(f.digitsMax) << v;
     return out.str();
 }
 
-inline std::string floatBreakdown(std::uint64_t raw, bool isDouble)
+// Names the pattern class an exponent field alone cannot show: "NaN", "+Inf",
+// "signed zero", "subnormal", or empty for an ordinary finite value. The
+// detail text and the workbench bar both label through this, so an all-ones
+// exponent is never read as a plain number.
+inline std::string floatSpecialLabel(std::uint64_t raw, const FloatSpec& f)
 {
+    const FloatFields g = floatFields(raw, f);
+    const char* sign = g.sign ? "-" : "+";
+    if (g.nan)
+        return std::string(sign) + "NaN";
+    if (g.inf)
+        return std::string(sign) + "Infinity";
+    if (g.exp == 0)
+        return g.mant == 0 ? std::string(sign) + "zero" : "subnormal";
+    return {};
+}
+
+inline std::string floatBreakdown(std::uint64_t raw, const FloatSpec& f)
+{
+    const FloatFields g = floatFields(raw, f);
     std::ostringstream out;
-    if (isDouble) {
-        const std::uint64_t sign = raw >> 63;
-        const std::uint64_t exponent = (raw >> 52) & 0x7FF;
-        const std::uint64_t mantissa = raw & 0xFFFFFFFFFFFFFull;
-        out << "IEEE-754 binary64  S=" << sign << "  E=0x" << std::uppercase << std::hex << exponent
-            << "  M=0x" << mantissa << std::dec << "\n";
-    } else {
-        const std::uint32_t low = static_cast<std::uint32_t>(raw & 0xFFFFFFFFu);
-        const std::uint32_t sign = low >> 31;
-        const std::uint32_t exponent = (low >> 23) & 0xFF;
-        const std::uint32_t mantissa = low & 0x7FFFFF;
-        out << "IEEE-754 binary32  S=" << sign << "  E=0x" << std::uppercase << std::hex << exponent
-            << "  M=0x" << mantissa << std::dec << "\n";
-    }
+    out << "IEEE-754 " << f.ieee << "  S=" << g.sign << "  E=0x" << std::uppercase << std::hex
+        << g.exp << "  M=0x" << g.mant << std::dec;
+    const std::string special = floatSpecialLabel(raw, f);
+    if (!special.empty())
+        out << "  " << special;
+    out << "\n";
     return out.str();
 }
 
@@ -1896,6 +2108,14 @@ inline Outcome<BytesEval> evalBytes(const std::string& input, const std::string&
     if (at < tokens.size() && resolveType(tokens[at], defaultEndian, spec)) {
         ++at;
     } else {
+        // Same honesty as bits: a float name the table lacks is a type error,
+        // not a byte token, so "bytes hex f128 00 00" does not answer "not a
+        // hex digit".
+        std::string spelling;
+        if (at < tokens.size() && unsupportedFloatName(tokens[at], spelling))
+            return failWith<BytesEval>(fail("E_FLOAT_TYPE",
+                spelling + " is not a float container this tool implements",
+                "use " + floatNameList() + ", e.g. bytes hex f16le 00 3e"));
         if (!resolveType("u8", defaultEndian, spec))
             return failWith<BytesEval>(fail("E_INTERNAL", "default type failed to resolve", hint));
     }
@@ -1977,9 +2197,9 @@ inline Outcome<BytesEval> evalBytes(const std::string& input, const std::string&
         w.offset = offset;
         w.typeName = spec.name;
         w.width = spec.size * 8;
-        w.isFloat = spec.isFloat;
+        w.isFloat = spec.flt != nullptr;
         w.bitsHex = hexUpper(raw, w.width);
-        w.primary = spec.isFloat ? formatFloat(raw, spec.size == 8) : w.bitsHex;
+        w.primary = spec.flt != nullptr ? formatFloat(raw, *spec.flt) : w.bitsHex;
 
         std::ostringstream bytes;
         for (std::size_t i = 0; i < size; ++i) {
@@ -1991,8 +2211,8 @@ inline Outcome<BytesEval> evalBytes(const std::string& input, const std::string&
         }
         std::ostringstream d;
         d << spec.name << " @" << offset << "  bytes " << bytes.str() << "\n";
-        if (spec.isFloat) {
-            d << "value " << w.primary << "  bits " << w.bitsHex << "\n" << floatBreakdown(raw, spec.size == 8);
+        if (spec.flt != nullptr) {
+            d << "value " << w.primary << "  bits " << w.bitsHex << "\n" << floatBreakdown(raw, *spec.flt);
         } else {
             const Repr r = represent(raw, w.width, spec.signedType);
             d << "HEX " << r.hex << "  BIN " << r.bin << "  OCT " << r.oct << "\n"
