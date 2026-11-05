@@ -34,6 +34,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <cwctype>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -75,7 +76,7 @@ namespace detail {
 
 constexpr int kTimerId = 1;
 constexpr DWORD kMsgFadeMs = 2000;
-constexpr int kEditH = 20;          // single-line EDIT; 24px left 9px of dead space
+constexpr int kEditMinH = 20;       // floor for the measured EDIT height
 constexpr int kHistBtnW = 34;       // expression history dropdown button
 constexpr int kHistRows = 12;       // visible entries in the dropdown
 constexpr int kHistRowH = 24;
@@ -126,6 +127,8 @@ struct EditorState {
     RECT rcTabs[5] = {};
     int tabDividerX = 0;       // separator between content modes and tool tabs
     RECT rcExpr = {};
+    int editH = 20;            // measured mono glyph height + symmetric padding
+    std::wstring killBuf;      // bash-style kill buffer (Ctrl+U/K/W/Y)
     RECT rcChip[5] = {};
     int resultRows = 1;
     int gridTop = 0;
@@ -702,8 +705,21 @@ void computeLayout(HDC dc)
                              16 + 132, rowTop + 6 * kPanelRowH - 2 };
     }
     s.clientH = std::max(s.clientH, kMinClientH);
-    s.rcExpr = { 64, kTopH + (kExprH - kEditH) / 2,
-                 s.clientW - 12 - kHistBtnW - 6, kTopH + (kExprH + kEditH) / 2 };
+    // The single-line EDIT is made exactly "glyph height + symmetric padding"
+    // tall, so its text lands on the control centre whatever internal
+    // alignment the native control uses, and the empty-state hint (drawn with
+    // the same font over the same rect) shares that baseline.
+    {
+        HFONT editProbe = monoFont(13, false);
+        HGDIOBJ oldProbe = SelectObject(dc, editProbe);
+        TEXTMETRICW etm {};
+        GetTextMetricsW(dc, &etm);
+        SelectObject(dc, oldProbe);
+        DeleteObject(editProbe);
+        s.editH = std::min(28, std::max(kEditMinH, static_cast<int>(etm.tmHeight) + 4));
+    }
+    s.rcExpr = { 64, kTopH + (kExprH - s.editH) / 2,
+                 s.clientW - 12 - kHistBtnW - 6, kTopH + (kExprH + s.editH) / 2 };
     s.rcHistoryBtn = { s.rcExpr.right + 6, s.rcExpr.top, s.clientW - 12, s.rcExpr.bottom };
     {
         // Full-width panel: a narrow right-aligned dropdown would cut through
@@ -1090,6 +1106,70 @@ void setType(HWND hwnd, int width, bool isSigned)
     relayout(hwnd);
 }
 
+// ---- bash-style expression-line editing ------------------------------------
+// Word semantics follow bash: a run of separator characters plus the adjacent
+// run of word characters is one word, so killing backward from "0xA5 &|"
+// removes "& " and then "0xA5". Kills land in the kill buffer (Ctrl+Y yanks)
+// and go through EM_REPLACESEL, which keeps them on the native undo stack.
+
+constexpr bool isExprWordChar(wchar_t c)
+{
+    return std::iswalnum(static_cast<wint_t>(c)) || c == L'_' || c == L'.';
+}
+
+int wordStartBackward(const std::wstring& t, int caret)
+{
+    int i = caret;
+    while (i > 0 && !isExprWordChar(t[static_cast<std::size_t>(i - 1)]))
+        --i;
+    while (i > 0 && isExprWordChar(t[static_cast<std::size_t>(i - 1)]))
+        --i;
+    return i;
+}
+
+int wordEndForward(const std::wstring& t, int caret)
+{
+    const int n = static_cast<int>(t.size());
+    int i = caret;
+    while (i < n && !isExprWordChar(t[static_cast<std::size_t>(i)]))
+        ++i;
+    while (i < n && isExprWordChar(t[static_cast<std::size_t>(i)]))
+        ++i;
+    return i;
+}
+
+struct EditBuffer {
+    std::wstring text;
+    int caret = 0; // active selection end: kills anchor here
+};
+
+EditBuffer editBuffer(HWND h)
+{
+    const int len = GetWindowTextLengthW(h);
+    EditBuffer b;
+    b.text.assign(static_cast<std::size_t>(len > 0 ? len : 0), L'\0');
+    if (len > 0)
+        GetWindowTextW(h, b.text.data(), len + 1);
+    DWORD a = 0, z = 0;
+    SendMessageW(h, 0x00B0 /* EM_GETSEL */, reinterpret_cast<WPARAM>(&a), reinterpret_cast<LPARAM>(&z));
+    b.caret = static_cast<int>(z);
+    return b;
+}
+
+void killRange(HWND h, int from, int to)
+{
+    const int n = static_cast<int>(editBuffer(h).text.size());
+    from = std::max(0, std::min(from, n));
+    to = std::max(from, std::min(to, n));
+    if (from == to)
+        return;
+    EditorState& s = state();
+    EditBuffer b = editBuffer(h);
+    s.killBuf = b.text.substr(static_cast<std::size_t>(from), static_cast<std::size_t>(to - from));
+    SendMessageW(h, 0x00B1 /* EM_SETSEL */, static_cast<WPARAM>(from), static_cast<LPARAM>(to));
+    SendMessageW(h, 0x00C2 /* EM_REPLACESEL */, TRUE, reinterpret_cast<LPARAM>(L""));
+}
+
 LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     EditorState& s = state();
@@ -1100,14 +1180,31 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 InvalidateRect(s.hwnd, nullptr, TRUE);
                 return 0;
             }
-            if (s.hwnd)
-                DestroyWindow(s.hwnd);
+            const EditBuffer b = editBuffer(h);
+            if (b.text.empty()) {
+                if (s.hwnd)
+                    DestroyWindow(s.hwnd);
+                return 0;
+            }
+            killRange(h, 0, static_cast<int>(b.text.size())); // Esc clears first
             return 0;
         }
         if (wp == VK_RETURN) {
             commitExpression(s.hwnd);
             return 0;
         }
+        if (wp == VK_TAB) {
+            SetFocus(s.hwnd); // hand the keyboard back to the grid
+            return 0;
+        }
+        if (wp == VK_DELETE && GetKeyState(VK_CONTROL) < 0) {
+            const EditBuffer b = editBuffer(h);
+            killRange(h, b.caret, wordEndForward(b.text, b.caret));
+            return 0;
+        }
+    }
+    if (msg == WM_SYSKEYDOWN) {
+        // Alt+Up / Alt+Down browse history (plain arrows stay native caret keys).
         if (wp == VK_UP) {
             historyStep(s.hwnd, true);
             return 0;
@@ -1116,21 +1213,57 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             historyStep(s.hwnd, false);
             return 0;
         }
-        if (wp == VK_TAB) {
-            SetFocus(s.hwnd); // hand the keyboard back to the grid
+    }
+    if (msg == WM_SYSCHAR && wp == 0x08) { // Alt+Backspace = backward kill word
+        const EditBuffer b = editBuffer(h);
+        killRange(h, wordStartBackward(b.text, b.caret), b.caret);
+        return 0;
+    }
+    // Bash control characters. They arrive here (not WM_KEYDOWN): returning 0
+    // from a key handler cannot stop TranslateMessage, so intercepting the
+    // WM_CHAR codes is the only way to keep the native EDIT from double-
+    // processing them. Plain chars fall through untouched, as do the native
+    // Ctrl+Z (0x1A undo) / Ctrl+X / C / V. 0x7F is Ctrl+Backspace.
+    if (msg == WM_CHAR && (wp < 0x20 || wp == 0x7F)) {
+        const EditBuffer b = editBuffer(h);
+        switch (wp) {
+        case 0x7F: // Ctrl+Backspace
+        case 0x17: // Ctrl+W
+            killRange(h, wordStartBackward(b.text, b.caret), b.caret);
             return 0;
+        case 0x15: // Ctrl+U: kill to line start
+            killRange(h, 0, b.caret);
+            return 0;
+        case 0x0B: // Ctrl+K: kill to line end
+            killRange(h, b.caret, static_cast<int>(b.text.size()));
+            return 0;
+        case 0x19: // Ctrl+Y: yank the kill buffer
+            SendMessageW(h, 0x00C2 /* EM_REPLACESEL */, TRUE,
+                         reinterpret_cast<LPARAM>(s.killBuf.c_str()));
+            return 0;
+        case 0x0C: // Ctrl+L: clear the line (yankable)
+            killRange(h, 0, static_cast<int>(b.text.size()));
+            return 0;
+        case 0x01: // Ctrl+A: line start
+            SendMessageW(h, 0x00B1 /* EM_SETSEL */, 0, 0);
+            return 0;
+        case 0x05: { // Ctrl+E: line end
+            const int n = static_cast<int>(b.text.size());
+            SendMessageW(h, 0x00B1 /* EM_SETSEL */, static_cast<WPARAM>(n), static_cast<LPARAM>(n));
+            return 0;
+        }
         }
     }
     if (msg == WM_PAINT) {
         const LRESULT r = CallWindowProcW(s.origEditProc, h, msg, wp, lp);
         // EM_SETCUEBANNER needs visual styles this process does not enable,
-        // so draw the empty-expression hint ourselves. The native EDIT keeps
-        // its own white background; the hint uses a dark grey on that surface.
+        // so draw the empty-expression hint ourselves. Same mono font and rect
+        // as the real text, so the hint sits on the identical baseline.
         if (GetWindowTextLengthW(h) == 0) {
             RECT rc {};
             GetClientRect(h, &rc);
             HDC dc = GetDC(h);
-            HFONT font = uiFont(11, false, s.zh);
+            HFONT font = monoFont(13, false);
             HGDIOBJ old = SelectObject(dc, font);
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, RGB(128, 128, 128));
@@ -1940,8 +2073,9 @@ void threadMain(EditorSpec spec)
                              s.rcExpr.bottom - s.rcExpr.top,
                              hwnd, reinterpret_cast<HMENU>(1), wc.hInstance, nullptr);
     SendMessageW(s.edit, WM_SETFONT, reinterpret_cast<WPARAM>(s.editFont), TRUE);
-    // 8px left inset and a 4px right inset; with kEditH=20 the 15px text line
-    // sits centred vertically instead of leaving 9px of dead space below it.
+    // 8px left inset and a 4px right inset. The control height comes from the
+    // measured mono glyph metrics (computeLayout), so the text is vertically
+    // centred instead of leaving dead space below it.
     SendMessageW(s.edit, 0x00D3 /* EM_SETMARGINS */, 0x0003 /* EC_LEFTMARGIN | EC_RIGHTMARGIN */,
                  static_cast<LPARAM>(MAKELONG(8, 4)));
     s.origEditProc = reinterpret_cast<WNDPROC>(

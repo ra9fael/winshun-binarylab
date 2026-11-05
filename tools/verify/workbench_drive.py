@@ -88,12 +88,24 @@ def post_move(hwnd, x, y):
 
 
 WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
+WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0104, 0x0105
+WM_CHAR = 0x0102
 VK_RETURN, VK_UP, VK_DOWN = 0x0D, 0x26, 0x28
+VK_BACK, VK_DELETE, VK_ESCAPE, VK_TAB = 0x08, 0x2E, 0x1B, 0x09
 
 
 def post_key(hwnd, vk):
     user32.PostMessageW(hwnd, WM_KEYDOWN, vk, 0)
     user32.PostMessageW(hwnd, WM_KEYUP, vk, 0)
+
+
+def post_alt_key(hwnd, vk):
+    user32.PostMessageW(hwnd, WM_SYSKEYDOWN, vk, 0)
+    user32.PostMessageW(hwnd, WM_SYSKEYUP, vk, 0)
+
+
+def post_ctrl_char(hwnd, code):
+    user32.PostMessageW(hwnd, WM_CHAR, code, 0)
 
 
 def edit_text(hwnd):
@@ -389,21 +401,62 @@ time.sleep(0.35)
 assert len(hist_lines()) == before, "resubmitting the same expression is a no-op"
 assert len(HIST_FILE.read_text(encoding="utf-8").splitlines()) == 3
 
-# ---- 7c: Up/Down browse history; Down past the newest restores the draft ----
+# ---- 7b2: bash-style editing shortcuts in the expression line ---------------
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
+time.sleep(0.4)
+# caret to the end (Ctrl+E), then Ctrl+Backspace kills separators + one word
+post_ctrl_char(edit, 0x05)
+post_ctrl_char(edit, 0x7F)
+time.sleep(0.4)
+assert edit_text(edit) == "u32 0xA5 & ", f"Ctrl+Backspace word kill, got {edit_text(edit)!r}"
+post_ctrl_char(edit, 0x7F)
+time.sleep(0.3)
+# bash semantics: the kill spans every separator plus the previous word
+assert edit_text(edit) == "u32 ", f"second word kill, got {edit_text(edit)!r}"
+# Ctrl+Y yanks the last killed span back
+post_ctrl_char(edit, 0x19)
+time.sleep(0.4)
+assert edit_text(edit) == "u32 0xA5 & ", f"Ctrl+Y yank, got {edit_text(edit)!r}"
+# Ctrl+U kills everything (yankable), Ctrl+L clears too
+post_ctrl_char(edit, 0x15)
+time.sleep(0.3)
+assert edit_text(edit) == "", f"Ctrl+U kill-all, got {edit_text(edit)!r}"
+user32.SendMessageW(edit, WM_SETTEXT, 0, "0xFF + 0x01")
+time.sleep(0.3)
+post_ctrl_char(edit, 0x0C)
+time.sleep(0.3)
+assert edit_text(edit) == "", f"Ctrl+L clear, got {edit_text(edit)!r}"
+# Ctrl+A / Ctrl+E move the caret; verify via EM_GETSEL after Ctrl+A then a char
+user32.SendMessageW(edit, WM_SETTEXT, 0, "0xFF + 0x01")
+time.sleep(0.3)
+post_ctrl_char(edit, 0x01)
+sel = ctypes.c_uint()
+sel_end = ctypes.c_uint()
+user32.SendMessageW(edit, 0x00B0, ctypes.byref(sel), ctypes.byref(sel_end))
+assert sel.value == 0 and sel_end.value == 0, "Ctrl+A must move the caret to line start"
+post_ctrl_char(edit, 0x05)
+user32.SendMessageW(edit, 0x00B0, ctypes.byref(sel), ctypes.byref(sel_end))
+assert sel.value == len("0xFF + 0x01"), "Ctrl+E must move the caret to line end"
+# Esc clears a non-empty line; Esc on the empty line closes the window
+post_key(edit, VK_ESCAPE)
+time.sleep(0.4)
+assert edit_text(edit) == "", f"Esc clears the line, got {edit_text(edit)!r}"
+
+# ---- 7c: Alt+Up/Down browse history; Down past the newest restores the draft
 user32.SendMessageW(edit, WM_SETTEXT, 0, "1")
 time.sleep(0.3)
-post_key(edit, VK_UP)
+post_alt_key(edit, VK_UP)
 time.sleep(0.3)
-assert edit_text(edit) == "4Mi", f"Up -> newest, got {edit_text(edit)!r}"
-post_key(edit, VK_UP)
+assert edit_text(edit) == "4Mi", f"Alt+Up -> newest, got {edit_text(edit)!r}"
+post_alt_key(edit, VK_UP)
 time.sleep(0.3)
-assert edit_text(edit) == "4M", "Up -> older"
-post_key(edit, VK_DOWN)
+assert edit_text(edit) == "4M", "Alt+Up -> older"
+post_alt_key(edit, VK_DOWN)
 time.sleep(0.3)
-assert edit_text(edit) == "4Mi", "Down -> newer"
-post_key(edit, VK_DOWN)
+assert edit_text(edit) == "4Mi", "Alt+Down -> newer"
+post_alt_key(edit, VK_DOWN)
 time.sleep(0.3)
-assert edit_text(edit) == "1", "Down past the newest restores the typed draft"
+assert edit_text(edit) == "1", "Alt+Down past the newest restores the typed draft"
 
 # ---- 7d: the dropdown button opens and a click recalls an expression ----
 user32.SendMessageW(edit, WM_SETTEXT, 0, "0x1")
