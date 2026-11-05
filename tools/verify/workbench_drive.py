@@ -31,6 +31,7 @@ PNG_PANEL = str(OUT / "workbench_settings.png")
 PNG_HELP = str(OUT / "workbench_help.png")
 PNG_ERR = str(OUT / "workbench_error.png")
 PNG_HOVER = str(OUT / "workbench_hover.png")
+PNG_BLANK = str(OUT / "workbench_blank.png")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -160,16 +161,57 @@ send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
       "params": {"protocolVersion": "1", "winshun": "0.7.0", "pluginDir": ".", "dataDir": ".",
                  "locale": "zh", "theme": "dark", "settings": {}}})
 recv(1)
-send({"jsonrpc": "2.0", "id": 2, "method": "query",
-      "params": {"queryId": 2, "command": "bits", "trigger": "keyword", "keyword": "bits",
+# ---- 0: `bits ` with no words must offer a REAL, actionable first row ----
+# The host sends command=bits, text="", raw="bits " for a keyword + space.
+send({"jsonrpc": "2.0", "id": 20, "method": "query",
+      "params": {"queryId": 20, "command": "bits", "trigger": "keyword", "keyword": "bits",
+                 "text": "", "raw": "bits ", "limit": 200}})
+blank = recv(20)["result"]["items"]
+print("empty-query first row:", blank[0].get("title"))
+e0 = blank[0]
+assert e0["id"] == "bits.open.workbench.empty", "empty keyword state needs a workbench entry"
+assert e0.get("valid", True), "an invalid row cannot be actioned by WinShun"
+assert e0["actions"][0]["id"] == "openEditor" and e0["actions"][0]["key"] == "Enter", \
+    "Enter on the first row must open the workbench"
+assert e0["data"]["expression"] == "" and e0["data"]["width"] == 32, \
+    "entry opens with a blank expression and the default width"
+assert len(blank) > 1 and e0["score"] > blank[1]["score"], "entry must outrank the examples"
+
+# Same state when the host leaves `command` empty and only supplies raw text.
+send({"jsonrpc": "2.0", "id": 21, "method": "query",
+      "params": {"queryId": 21, "command": "", "trigger": "keyword", "keyword": "",
+                 "text": "", "raw": "bits ", "limit": 200}})
+blank_raw = recv(21)["result"]["items"]
+assert blank_raw[0]["id"] == "bits.open.workbench.empty", "raw fallback must resolve the keyword"
+
+# ---- 0b: open from that row; the expression box must be blank ----
+send({"jsonrpc": "2.0", "id": 22, "method": "action",
+      "params": {"command": "bits", "action": "openEditor", "item": e0, "text": ""}})
+recv(22)
+time.sleep(1.0)
+hwnd0 = user32.FindWindowW("WinShunBinaryLabEditor", None)
+assert hwnd0, "blank-state entry must open the editor"
+edit0 = user32.FindWindowExW(hwnd0, None, "EDIT", None)
+buf0 = ctypes.create_unicode_buffer(256)
+user32.SendMessageW(edit0, WM_GETTEXT, 256, buf0)
+print("blank expression box:", repr(buf0.value))
+assert buf0.value == "", f"entry row must leave the expression blank, got {buf0.value!r}"
+lay_blank = layout(0)
+assert int(lay_blank["clientH"]) == 446, "blank entry uses the default 32-bit width"
+assert shoot(PNG_BLANK)
+
+# ---- 0c: the ordinary expression entry still opens with its expression ----
+send({"jsonrpc": "2.0", "id": 23, "method": "query",
+      "params": {"queryId": 23, "command": "bits", "trigger": "keyword", "keyword": "bits",
                  "text": "u32 0xA5 & 0x0F", "raw": "bits u32 0xA5 & 0x0F", "limit": 200}})
-items = recv(2)["result"]["items"]
+items = recv(23)["result"]["items"]
 print("first row:", items[0].get("title"))
 assert items[0]["id"] == "bits.open.workbench", "first result row must be the workbench entry"
-send({"jsonrpc": "2.0", "id": 3, "method": "action",
+n_before_reopen = len([l for l in stderr_lines if "layout:" in l])
+send({"jsonrpc": "2.0", "id": 24, "method": "action",
       "params": {"command": "bits", "action": "openEditor", "item": items[0],
                  "text": "u32 0xA5 & 0x0F"}})
-recv(3)
+recv(24)
 time.sleep(1.0)
 
 hwnd = user32.FindWindowW("WinShunBinaryLabEditor", None)
@@ -177,7 +219,7 @@ if not hwnd:
     print("FAIL: window not found")
     sys.exit(1)
 print("hwnd:", hwnd)
-lay = layout(0)
+lay = layout(n_before_reopen)
 print("layout:", lay)
 assert int(lay["mode"]) == 0
 assert int(lay["clientH"]) == 446, f"u32 two-row status bar -> 446, got {lay['clientH']}"
@@ -185,6 +227,9 @@ assert "parity0" in lay and "tab3" in lay and "tab4" in lay
 
 edit = user32.FindWindowExW(hwnd, None, "EDIT", None)
 print("edit:", edit)
+buf = ctypes.create_unicode_buffer(256)
+user32.SendMessageW(edit, WM_GETTEXT, 256, buf)
+assert buf.value == "u32 0xA5 & 0x0F", f"expression lost on reopen: {buf.value!r}"
 
 # ---- 1: live re-evaluation + HEX chip ----
 user32.SendMessageW(edit, WM_SETTEXT, 0, "0xFF ^ 0x0F")
