@@ -23,12 +23,21 @@ never published; they are listed below for context.
   clickable per-base copy chips (HEX / OCT / BIN / DEC / all) and a status bar.
 - A width / signedness toolbar (`8|16|32|64`, `u|i`) above the bit grid; the
   grid widens to fill the window.
-- Live popcount and even-parity bit in the status bar.
+- Five top-bar tabs: bits / bytes / struct, plus Settings and Help as real
+  content panels (two-column layout, no floating overlays).
+- A dedicated first result row whose `Enter` opens the workbench; every base
+  row below keeps `Enter` = copy.
+- A two-row status bar: four labelled clickable parity chips (ones, parity,
+  even-bit, odd-bit) with hover definitions, and full untruncated parse
+  errors.
 
 ### Changed
 - Plugin id is now `ra9fael.binarylab` (was `renfei.binarylab`) and the author
   is `ra9fael`. Settings from a local `renfei.binarylab` install do not carry
   over.
+- Settings and Help replace the content area instead of covering it, so a tab
+  click is never swallowed by an open panel.
+- Host settings in the Settings tab are read-only: the SDK provides no setter.
 
 ### Fixed
 - The BIN and DEC copy chips copied each other's value.

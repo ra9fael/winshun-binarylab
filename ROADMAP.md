@@ -91,6 +91,22 @@
   chips copied each other). `workbench_drive.py` covers toolbar 8 (shrink,
   truncate), i8 DEC `-15`, i64 sign extension `0xFFFFFFFFFFFFFFF1`, prefix
   rewrite `u32 -> u16`, and settings cycle sync.
+- **v0.3a3 — implemented (2026-11-06).** Five top-bar tabs: the first three
+  remain content modes, `Settings` and `Help` become real tabs that replace
+  the content area with a two-column panel (this column / read-only host
+  settings snapshot, and syntax / keys / parity terms). The old floating
+  overlays and their "first click only closes the panel" branch are deleted.
+  The status bar becomes two rows (`kStatusH` 24 -> 46): row 1 holds context
+  plus focus/copy feedback, row 2 holds four labelled clickable parity chips
+  (`ones`, `parity`, `even-bit`, `odd-bit`) or a full untruncated parse error;
+  hovering a chip swaps the row-1 text for its definition, so no box ever
+  covers the bit grid. `kMinClientH = 280` keeps every non-bits tab at one
+  fixed height. The first bits result row is now a dedicated workbench entry
+  (`Enter` opens, the remaining rows keep `Enter` = copy). Host settings are
+  read-only in the window: `winshun.h` exposes `settingsChanged()` but no
+  setter. `workbench_drive.py` was rebuilt (the old `build/verify` was wiped)
+  and now covers parity-chip copies, all five tabs, direct tab-to-tab
+  switching, settings-tab buttons, the full error string and five screenshots.
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise
