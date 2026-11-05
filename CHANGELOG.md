@@ -38,6 +38,14 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   the full English text. Both link to each other. The English install steps now
   use Win顺's real English UI labels. No runtime change.
 
+### Fixed
+- The caret in the workbench expression line sat above the characters. A
+  single-line EDIT centres its glyphs in a client area taller than the text
+  line but pins the caret to the top of the line box, so the previous
+  "line height + 4 px" control left the bar 2 px high; the control is now
+  exactly one measured text line tall, so caret and glyphs share one box and
+  the band centring positions both.
+
 ## [0.3.0] - 2026-11-05
 
 First public release. Versions 0.1.0 and 0.2.0 were developed locally and

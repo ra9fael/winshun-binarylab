@@ -78,7 +78,6 @@ namespace detail {
 
 constexpr int kTimerId = 1;
 constexpr DWORD kMsgFadeMs = 2000;
-constexpr int kEditMinH = 20;       // floor for the measured EDIT height
 constexpr int kHistBtnW = 34;       // expression history dropdown button
 constexpr int kHistRows = 12;       // visible entries in the dropdown
 constexpr int kHistRowH = 24;
@@ -131,7 +130,7 @@ struct EditorState {
     RECT rcTabs[5] = {};
     int tabDividerX = 0;       // separator between content modes and tool tabs
     RECT rcExpr = {};
-    int editH = 20;            // measured mono glyph height + symmetric padding
+    int editH = 20;            // measured mono line height: no slack for the caret
     std::wstring killBuf;      // bash-style kill buffer (Ctrl+U/K/W/Y)
     RECT rcChip[5] = {};
     int resultRows = 1;
@@ -716,10 +715,11 @@ void computeLayout(HDC dc)
                              s.panelCol2 + 132, rowTop + 6 * kPanelRowH - 2 };
     }
     s.clientH = std::max(s.clientH, kMinClientH);
-    // The single-line EDIT is made exactly "glyph height + symmetric padding"
-    // tall, so its text lands on the control centre whatever internal
-    // alignment the native control uses, and the empty-state hint (drawn with
-    // the same font over the same rect) shares that baseline.
+    // The single-line EDIT is made exactly one text line tall. A control taller
+    // than its line centres the glyphs but pins the caret to the top of the
+    // line box, which reads as a caret floating above the text; with zero slack
+    // the caret and the characters share one box, and rcExpr centres that box in
+    // the band. The empty-state hint uses the same metrics, so it agrees too.
     {
         HFONT editProbe = monoFont(13, false);
         HGDIOBJ oldProbe = SelectObject(dc, editProbe);
@@ -727,7 +727,7 @@ void computeLayout(HDC dc)
         GetTextMetricsW(dc, &etm);
         SelectObject(dc, oldProbe);
         DeleteObject(editProbe);
-        s.editH = std::min(28, std::max(kEditMinH, static_cast<int>(etm.tmHeight) + 4));
+        s.editH = std::max(12, static_cast<int>(etm.tmHeight));
     }
     s.rcExpr = { 64, kTopH + (kExprH - s.editH) / 2,
                  s.clientW - 12 - kHistBtnW - 6, kTopH + (kExprH + s.editH) / 2 };
