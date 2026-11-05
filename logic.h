@@ -646,11 +646,29 @@ inline std::vector<std::string> lexBits(const std::string& s)
     };
     for (std::size_t i = 0; i < s.size(); ++i) {
         const char c = s[i];
+        // An exponent sign belongs to its number: glue "-6" onto "1e" so the
+        // float literal 1e-6 survives, but keep the '-' of 0x1E - 6 separate.
+        const bool exponentSign = !current.empty()
+            && (current.back() == 'e' || current.back() == 'E')
+            && (c == '+' || c == '-')
+            && !(current.size() >= 2 && current[0] == '0'
+                 && (current[1] == 'x' || current[1] == 'X'));
         if (std::isspace(static_cast<unsigned char>(c))) {
             flush();
-        } else if (c == '&' || c == '|' || c == '^' || c == '~') {
+        } else if (exponentSign) {
+            current += c;
+        } else if (c == '&' || c == '|' || c == '^' || c == '~' || c == '('
+                   || c == ')' || c == '+' || c == '-' || c == '/' || c == '%') {
             flush();
             tokens.push_back(std::string(1, c));
+        } else if (c == '*') {
+            flush();
+            if (i + 1 < s.size() && s[i + 1] == '*') {
+                tokens.push_back("**");
+                ++i;
+            } else {
+                tokens.push_back(std::string(1, c));
+            }
         } else if (c == '<' || c == '>') {
             flush();
             if (i + 1 < s.size() && s[i + 1] == c) {
@@ -725,7 +743,663 @@ inline Outcome<std::pair<int, int>> parseBitRange(const std::string& token, int 
     return Outcome<std::pair<int, int>>::good({static_cast<int>(hi.value), static_cast<int>(lo.value)});
 }
 
-inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bool defaultSigned)
+// ---- integer expression evaluation ---------------------------------------------
+//
+// Two modes. EvalMode::Fixed keeps every intermediate result inside the
+// expression's type: out-of-range values wrap (two's complement) and the note
+// reports how many steps exceeded the width. EvalMode::C follows the C integer
+// promotions (i32 plays `int`): results grow to their natural type and signed
+// overflow is an error, while unsigned wrap stays defined. An explicit type
+// prefix always selects Fixed semantics — the prefix is a promise about the
+// exact width, and C would promote u8 operands straight back to i32.
+enum class EvalMode { Fixed, C };
+
+struct ExprVal {
+    std::uint64_t v = 0;   // bit pattern inside the type's width
+    int width = 32;        // 8..64
+    bool isSigned = false;
+    bool negated = false;  // produced by unary minus; unsigned wrap may hide the sign
+};
+
+// Reinterpret the bit pattern as a 64-bit two's complement value the way a C
+// conversion to a wider type would.
+inline std::uint64_t widenBits(std::uint64_t v, int width, bool isSigned)
+{
+    v &= maskFor(width);
+    if (isSigned && width < 64 && (v & (std::uint64_t(1) << (width - 1))))
+        v |= ~maskFor(width);
+    return v;
+}
+
+inline ExprVal convertVal(const ExprVal& x, int width, bool isSigned)
+{
+    return ExprVal {widenBits(x.v, x.width, x.isSigned) & maskFor(width), width, isSigned};
+}
+
+inline ExprVal promoteVal(const ExprVal& x)
+{
+    return x.width < 32 ? convertVal(x, 32, true) : x;
+}
+
+inline ExprVal usualArith(const ExprVal& a, const ExprVal& b)
+{
+    const ExprVal x = promoteVal(a);
+    const ExprVal y = promoteVal(b);
+    if (x.isSigned == y.isSigned)
+        return x.width >= y.width ? x : y;
+    const ExprVal& u = x.isSigned ? y : x;
+    const ExprVal& s = x.isSigned ? x : y;
+    if (s.width > u.width)
+        return convertVal(u, s.width, true);
+    return convertVal(s, u.width, false);
+}
+
+inline std::int64_t signedValue(const ExprVal& x)
+{
+    return static_cast<std::int64_t>(widenBits(x.v, x.width, x.isSigned));
+}
+
+inline std::uint64_t unsignedValue(const ExprVal& x)
+{
+    return widenBits(x.v, x.width, x.isSigned);
+}
+
+// Modular result plus a flag telling whether the true value left the type.
+struct ArithResult {
+    std::uint64_t bits = 0;
+    bool over = false;
+};
+
+inline ArithResult arithAdd(int w, bool sg, std::uint64_t ua, std::uint64_t ub)
+{
+    const std::uint64_t m = maskFor(w);
+    const std::uint64_t res = ua + ub;
+    if (!sg)
+        return {res, w == 64 ? res < ua : res > m};
+    if (w < 64) {
+        const std::int64_t t = static_cast<std::int64_t>(ua) + static_cast<std::int64_t>(ub);
+        const std::int64_t lo = -(std::int64_t(1) << (w - 1));
+        const std::int64_t hi = static_cast<std::int64_t>(m >> 1);
+        return {static_cast<std::uint64_t>(t), t < lo || t > hi};
+    }
+    return {res, ((res ^ ua) & (res ^ ub)) >> 63 != 0};
+}
+
+inline ArithResult arithSub(int w, bool sg, std::uint64_t ua, std::uint64_t ub)
+{
+    const std::uint64_t m = maskFor(w);
+    const std::uint64_t res = ua - ub;
+    if (!sg)
+        return {res, ua < ub};
+    if (w < 64) {
+        const std::int64_t t = static_cast<std::int64_t>(ua) - static_cast<std::int64_t>(ub);
+        const std::int64_t lo = -(std::int64_t(1) << (w - 1));
+        const std::int64_t hi = static_cast<std::int64_t>(m >> 1);
+        return {static_cast<std::uint64_t>(t), t < lo || t > hi};
+    }
+    return {res, ((ua ^ ub) & (res ^ ua)) >> 63 != 0};
+}
+
+inline ArithResult arithMul(int w, bool sg, std::uint64_t ua, std::uint64_t ub)
+{
+    const std::uint64_t m = maskFor(w);
+    const std::uint64_t res = ua * ub;
+    if (!sg) {
+        if (w < 64)
+            return {res, res > m};
+        return {res, ua != 0 && res / ua != ub};
+    }
+    if (w < 64) {
+        const std::int64_t t = static_cast<std::int64_t>(ua) * static_cast<std::int64_t>(ub);
+        const std::int64_t lo = -(std::int64_t(1) << (w - 1));
+        const std::int64_t hi = static_cast<std::int64_t>(m >> 1);
+        return {static_cast<std::uint64_t>(t), t < lo || t > hi};
+    }
+    // 64-bit signed: magnitudes times each other; only -2^63 is reachable
+    // beyond the positive range and only when the signs differ.
+    const bool negA = (ua >> 63) != 0;
+    const bool negB = (ub >> 63) != 0;
+    const std::uint64_t magA = negA ? 0 - ua : ua;
+    const std::uint64_t magB = negB ? 0 - ub : ub;
+    if (magA != 0 && magB != 0 && magA > ~std::uint64_t(0) / magB)
+        return {res, true};
+    const std::uint64_t mag = magA * magB;
+    if (mag <= std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+        return {res, false};
+    return {res, negA == negB};
+}
+
+// The recursive-descent expression parser shared by the query path and the
+// workbench input line. Grammar, tightest first:
+//   primary  := literal | '(' expr ')'
+//   unary    := ('~' | '+' | '-') unary | primary        ('-' folds into literals)
+//   pow      := unary ('**' pow)?                        (right associative)
+//   mul      := pow (('*' | '/' | '%') pow)*
+//   add      := mul (('+' | '-') mul)*
+//   shift    := add (('<<' | '>>' | 'rol' | 'ror') add)*
+//   and/xor/or := ... ('&' | '^' | '|') ...              (lowest precedence)
+struct BitsParser {
+    const std::vector<std::string>& toks;
+    std::size_t pos = 0;
+    EvalMode mode = EvalMode::Fixed;
+    int width = 32;            // Fixed-mode expression type
+    bool signedType = false;
+    std::string hint;
+    int steps = 0;             // evaluated operations and conversions
+    int wraps = 0;             // steps whose true value left the type
+    std::string unitNote;
+    std::set<std::string> promos;   // C-mode small-type promotions, e.g. "u8->i32"
+    bool countMode = false;    // Fixed-mode shift counts evaluate as raw u64
+
+    BitsParser(const std::vector<std::string>& tokens, EvalMode m, int w, bool sg,
+               const std::string& h)
+        : toks(tokens), mode(m), width(w), signedType(sg), hint(h)
+    {
+    }
+
+    bool atEnd() const { return pos >= toks.size(); }
+    const std::string& peek() const { return toks[pos]; }
+    bool peekIs(const char* s) const { return !atEnd() && toks[pos] == s; }
+    bool eat(const char* s)
+    {
+        if (peekIs(s)) {
+            ++pos;
+            return true;
+        }
+        return false;
+    }
+    int curWidth() const { return countMode ? 64 : width; }
+    bool curSigned() const { return countMode ? false : signedType; }
+    void logPromo(const ExprVal& before, const ExprVal& after)
+    {
+        if (before.width != after.width || before.isSigned != after.isSigned)
+            promos.insert(typeNameFor(before.width, before.isSigned) + "->"
+                          + typeNameFor(after.width, after.isSigned));
+    }
+
+    Outcome<ExprVal> literalVal(const std::string& token, bool negated)
+    {
+        LiteralInfo info;
+        info.requestFloatWidth = 64;
+        auto p = parseLiteral(token, 64, false, &info);
+        if (!p.success)
+            return failWith<ExprVal>(p.failure);
+        if (info.isFloat)
+            return failWith<ExprVal>(fail("E_FLOAT_OP",
+                "a float literal is only allowed as a single value", "bits f64 1.5"));
+        if (!info.unitNote.empty())
+            unitNote = info.unitNote;
+        const std::uint64_t mag = p.value;
+        if (countMode) {
+            if (negated && mag > 0)
+                return failWith<ExprVal>(fail("E_SHIFT", "shift count is negative", hint));
+            return Outcome<ExprVal>::good(ExprVal {mag, 64, false});
+        }
+        if (mode == EvalMode::C) {
+            int w;
+            bool sg;
+            if (mag <= std::uint64_t(INT32_MAX)) {
+                w = 32;
+                sg = true;
+            } else if (mag <= UINT32_MAX) {
+                w = 32;
+                sg = false;
+            } else if (mag <= std::uint64_t(INT64_MAX)) {
+                w = 64;
+                sg = true;
+            } else {
+                w = 64;
+                sg = false;
+            }
+            ExprVal r {mag, w, sg};
+            if (negated) {
+                ++steps;
+                r.negated = true;
+                if (!sg)
+                    ++wraps;   // defined modulo wrap in C, still worth naming
+                r.v = (0 - mag) & maskFor(w);
+            }
+            return Outcome<ExprVal>::good(r);
+        }
+        ++steps;
+        const int w = width;
+        const bool sg = signedType;
+        const std::uint64_t m = maskFor(w);
+        bool wrapped = false;
+        std::uint64_t v = 0;
+        if (negated) {
+            wrapped = sg ? mag > (std::uint64_t(1) << (w - 1)) : mag > 0;
+            v = (0 - mag) & m;
+        } else {
+            wrapped = sg ? mag > (m >> 1) : mag > m;
+            v = mag & m;
+        }
+        if (wrapped)
+            ++wraps;
+        ExprVal out {v, w, sg};
+        out.negated = negated;
+        return Outcome<ExprVal>::good(out);
+    }
+
+    Outcome<ExprVal> negateVal(const ExprVal& x)
+    {
+        ++steps;
+        if (mode == EvalMode::Fixed || countMode) {
+            const int w = curWidth();
+            const bool sg = curSigned();
+            if (sg && x.v == (std::uint64_t(1) << (w - 1)))
+                ++wraps;   // negating the most negative value has no in-range result
+            ExprVal out {(0 - x.v) & maskFor(w), w, sg};
+            out.negated = true;
+            return Outcome<ExprVal>::good(out);
+        }
+        const ExprVal p = promoteVal(x);
+        logPromo(x, p);
+        if (!p.isSigned)
+            ++wraps;
+        else if (p.width == 64 && p.v == (std::uint64_t(1) << 63))
+            return failWith<ExprVal>(fail("E_RANGE",
+                "negating the most negative i64 overflows", hint));
+        ExprVal out {(0 - p.v) & maskFor(p.width), p.width, p.isSigned};
+        out.negated = true;
+        return Outcome<ExprVal>::good(out);
+    }
+
+    Outcome<ExprVal> complementVal(const ExprVal& x)
+    {
+        ++steps;
+        if (mode == EvalMode::Fixed || countMode) {
+            const int w = curWidth();
+            return Outcome<ExprVal>::good(ExprVal {~x.v & maskFor(w), w, curSigned()});
+        }
+        const ExprVal p = promoteVal(x);
+        logPromo(x, p);
+        return Outcome<ExprVal>::good(ExprVal {~p.v & maskFor(p.width), p.width, p.isSigned});
+    }
+
+    Outcome<ExprVal> unaryPlusVal(const ExprVal& x)
+    {
+        if (mode == EvalMode::C && !countMode) {
+            const ExprVal p = promoteVal(x);
+            logPromo(x, p);
+            return Outcome<ExprVal>::good(p);
+        }
+        return Outcome<ExprVal>::good(x);
+    }
+
+    Outcome<ExprVal> parsePrimary()
+    {
+        if (eat("(")) {
+            auto v = parseOr();
+            if (!v.success)
+                return v;
+            if (!eat(")"))
+                return failWith<ExprVal>(fail("E_SYNTAX", "expected a closing parenthesis", hint));
+            return v;
+        }
+        if (atEnd())
+            return failWith<ExprVal>(fail("E_SYNTAX", "expected a value", hint));
+        const std::string token = peek();
+        ++pos;
+        return literalVal(token, false);
+    }
+
+    static bool isNumberToken(const std::string& t)
+    {
+        return !t.empty() && (t[0] == '@' || (t[0] >= '0' && t[0] <= '9'));
+    }
+
+    Outcome<ExprVal> parseUnary()
+    {
+        if (eat("-")) {
+            // Fold the minus into a number so -128 never has to pass through
+            // +128 on its way into a narrow type.
+            if (!atEnd() && isNumberToken(peek())) {
+                const std::string token = peek();
+                ++pos;
+                return literalVal(token, true);
+            }
+            auto x = parseUnary();
+            if (!x.success)
+                return x;
+            return negateVal(x.value);
+        }
+        if (eat("~")) {
+            auto x = parseUnary();
+            if (!x.success)
+                return x;
+            return complementVal(x.value);
+        }
+        if (eat("+")) {
+            auto x = parseUnary();
+            if (!x.success)
+                return x;
+            return unaryPlusVal(x.value);
+        }
+        return parsePrimary();
+    }
+
+    Outcome<ExprVal> parsePow()
+    {
+        auto lhsV = parseUnary();
+        if (!lhsV.success)
+            return lhsV;
+        if (!peekIs("**"))
+            return lhsV;
+        ++pos;
+        auto rhsV = parsePow();
+        if (!rhsV.success)
+            return rhsV;
+        return applyPow(lhsV.value, rhsV.value);
+    }
+
+    Outcome<ExprVal> parseMul()
+    {
+        auto lhsV = parsePow();
+        if (!lhsV.success)
+            return lhsV;
+        while (peekIs("*") || peekIs("/") || peekIs("%")) {
+            const std::string op = peek();
+            ++pos;
+            auto rhsV = parsePow();
+            if (!rhsV.success)
+                return rhsV;
+            lhsV = applyMulDivMod(op, lhsV.value, rhsV.value);
+            if (!lhsV.success)
+                return lhsV;
+        }
+        return lhsV;
+    }
+
+    Outcome<ExprVal> parseAdd()
+    {
+        auto lhsV = parseMul();
+        if (!lhsV.success)
+            return lhsV;
+        while (peekIs("+") || peekIs("-")) {
+            const std::string op = peek();
+            ++pos;
+            auto rhsV = parseMul();
+            if (!rhsV.success)
+                return rhsV;
+            lhsV = applyAddSub(op, lhsV.value, rhsV.value);
+            if (!lhsV.success)
+                return lhsV;
+        }
+        return lhsV;
+    }
+
+    Outcome<ExprVal> parseShift()
+    {
+        auto lhsV = parseAdd();
+        if (!lhsV.success)
+            return lhsV;
+        while (peekIs("<<") || peekIs(">>") || peekIs("rol") || peekIs("ror")) {
+            const std::string op = peek();
+            ++pos;
+            const bool rawCount = mode == EvalMode::Fixed && (op == "<<" || op == ">>");
+            const bool prevCount = countMode;
+            countMode = rawCount;
+            auto rhsV = parseAdd();
+            countMode = prevCount;
+            if (!rhsV.success)
+                return rhsV;
+            lhsV = applyShiftRotate(op, lhsV.value, rhsV.value);
+            if (!lhsV.success)
+                return lhsV;
+        }
+        return lhsV;
+    }
+
+    Outcome<ExprVal> parseAnd()
+    {
+        auto lhsV = parseShift();
+        if (!lhsV.success)
+            return lhsV;
+        while (peekIs("&")) {
+            ++pos;
+            auto rhsV = parseShift();
+            if (!rhsV.success)
+                return rhsV;
+            lhsV = applyBitwise("&", lhsV.value, rhsV.value);
+            if (!lhsV.success)
+                return lhsV;
+        }
+        return lhsV;
+    }
+
+    Outcome<ExprVal> parseXor()
+    {
+        auto lhsV = parseAnd();
+        if (!lhsV.success)
+            return lhsV;
+        while (peekIs("^")) {
+            ++pos;
+            auto rhsV = parseAnd();
+            if (!rhsV.success)
+                return rhsV;
+            lhsV = applyBitwise("^", lhsV.value, rhsV.value);
+            if (!lhsV.success)
+                return lhsV;
+        }
+        return lhsV;
+    }
+
+    Outcome<ExprVal> parseOr()
+    {
+        auto lhsV = parseXor();
+        if (!lhsV.success)
+            return lhsV;
+        while (peekIs("|")) {
+            ++pos;
+            auto rhsV = parseXor();
+            if (!rhsV.success)
+                return rhsV;
+            lhsV = applyBitwise("|", lhsV.value, rhsV.value);
+            if (!lhsV.success)
+                return lhsV;
+        }
+        return lhsV;
+    }
+
+    // Both operands share one type by the time an arithmetic op runs: the
+    // Fixed type, the raw u64 count type, or the usual-arithmetic result.
+    std::pair<int, bool> commonType(const ExprVal& a, const ExprVal& b) const
+    {
+        if (mode == EvalMode::C && !countMode) {
+            const ExprVal t = usualArith(a, b);
+            return {t.width, t.isSigned};
+        }
+        return {curWidth(), curSigned()};
+    }
+
+    ExprVal toCommon(const ExprVal& x, int w, bool sg) const
+    {
+        if (mode == EvalMode::C && !countMode)
+            return convertVal(x, w, sg);
+        return ExprVal {x.v & maskFor(w), w, sg};
+    }
+
+    Outcome<ExprVal> applyAddSub(const std::string& op, const ExprVal& a, const ExprVal& b)
+    {
+        ++steps;
+        const auto ct = commonType(a, b);
+        const int w = ct.first;
+        const bool sg = ct.second;
+        const ExprVal x = toCommon(a, w, sg);
+        const ExprVal y = toCommon(b, w, sg);
+        const ArithResult r = op == "+" ? arithAdd(w, sg, x.v, y.v) : arithSub(w, sg, x.v, y.v);
+        if (over(r, sg))
+            return failWith<ExprVal>(fail("E_RANGE",
+                std::string("signed ") + (op == "+" ? "addition" : "subtraction")
+                    + " overflows " + typeNameFor(w, sg),
+                hint));
+        if (r.over)
+            ++wraps;
+        return Outcome<ExprVal>::good(ExprVal {r.bits & maskFor(w), w, sg});
+    }
+
+    Outcome<ExprVal> applyMulDivMod(const std::string& op, const ExprVal& a, const ExprVal& b)
+    {
+        const auto ct = commonType(a, b);
+        const int w = ct.first;
+        const bool sg = ct.second;
+        const ExprVal x = toCommon(a, w, sg);
+        const ExprVal y = toCommon(b, w, sg);
+        if (op != "*") {
+            ++steps;
+            if (y.v == 0)
+                return failWith<ExprVal>(fail("E_DIV_ZERO",
+                    op == "/" ? "division by zero" : "modulo by zero", hint));
+            const bool c = mode == EvalMode::C && !countMode;
+            const std::uint64_t m = maskFor(w);
+            if (sg) {
+                const std::int64_t sa = static_cast<std::int64_t>(widenBits(x.v, w, sg));
+                const std::int64_t sb = static_cast<std::int64_t>(widenBits(y.v, w, sg));
+                const bool minOverMinus1 = sa == std::numeric_limits<std::int64_t>::min()
+                                           && sb == -1;
+                if (minOverMinus1 && c)
+                    return failWith<ExprVal>(fail("E_RANGE",
+                        op == "/" ? "i64 division overflows" : "i64 modulo overflows", hint));
+                const std::int64_t t = op == "/" ? (minOverMinus1 ? sa : sa / sb)
+                                                 : (minOverMinus1 ? 0 : sa % sb);
+                const std::int64_t lo = -(std::int64_t(1) << (w - 1));
+                const std::int64_t hi = static_cast<std::int64_t>(m >> 1);
+                if (w == 64 && t == lo && op == "/") {
+                    if (c)
+                        return failWith<ExprVal>(fail("E_RANGE", "i64 division overflows", hint));
+                    ++wraps;
+                    return Outcome<ExprVal>::good(ExprVal {x.v, w, sg});
+                }
+                if (t < lo || t > hi)
+                    ++wraps;
+                return Outcome<ExprVal>::good(ExprVal {static_cast<std::uint64_t>(t) & m, w, sg});
+            }
+            return Outcome<ExprVal>::good(ExprVal {op == "/" ? x.v / y.v : x.v % y.v, w, sg});
+        }
+        ++steps;
+        const ArithResult r = arithMul(w, sg, x.v, y.v);
+        if (over(r, sg))
+            return failWith<ExprVal>(fail("E_RANGE",
+                "signed multiplication overflows " + typeNameFor(w, sg), hint));
+        if (r.over)
+            ++wraps;
+        return Outcome<ExprVal>::good(ExprVal {r.bits & maskFor(w), w, sg});
+    }
+
+    Outcome<ExprVal> applyPow(const ExprVal& a, const ExprVal& b)
+    {
+        if ((b.isSigned && signedValue(b) < 0) || (!b.isSigned && b.negated))
+            return failWith<ExprVal>(fail("E_RANGE", "exponent must be non-negative", hint));
+        const std::uint64_t exponent = unsignedValue(b);
+        const bool c = mode == EvalMode::C && !countMode;
+        int w;
+        bool sg;
+        if (c) {
+            const ExprVal p = promoteVal(a);
+            logPromo(a, p);
+            w = p.width;
+            sg = p.isSigned;
+        } else {
+            w = curWidth();
+            sg = curSigned();
+        }
+        const std::uint64_t m = maskFor(w);
+        const ExprVal base = toCommon(a, w, sg);
+        ExprVal acc {1, w, sg};
+        ExprVal square = base;
+        std::uint64_t e = exponent;
+        while (e != 0) {
+            const auto step = [&](ExprVal x, ExprVal y) -> Outcome<ExprVal> {
+                ++steps;
+                const ArithResult r = arithMul(w, sg, x.v, y.v);
+                if (r.over && c)
+                    return failWith<ExprVal>(fail("E_RANGE",
+                        "the power result does not fit in " + typeNameFor(w, sg), hint));
+                if (r.over)
+                    ++wraps;
+                return Outcome<ExprVal>::good(ExprVal {r.bits & m, w, sg});
+            };
+            if (e & 1) {
+                auto t = step(acc, square);
+                if (!t.success)
+                    return t;
+                acc = t.value;
+            }
+            e >>= 1;
+            if (e != 0) {
+                auto t = step(square, square);
+                if (!t.success)
+                    return t;
+                square = t.value;
+            }
+        }
+        return Outcome<ExprVal>::good(acc);
+    }
+
+    Outcome<ExprVal> applyShiftRotate(const std::string& op, const ExprVal& a, const ExprVal& b)
+    {
+        ++steps;
+        const bool isShift = op == "<<" || op == ">>";
+        const bool c = mode == EvalMode::C && !countMode;
+        if (b.isSigned && signedValue(b) < 0)
+            return failWith<ExprVal>(fail("E_SHIFT",
+                isShift ? "shift count is negative" : "rotate count is negative", hint));
+        const std::uint64_t count = unsignedValue(b);
+        ExprVal lt = a;
+        if (c) {
+            lt = promoteVal(a);
+            logPromo(a, lt);
+        }
+        const int w = lt.width;
+        const std::uint64_t m = maskFor(w);
+        if (op == "rol" || op == "ror") {
+            const unsigned n = static_cast<unsigned>(count % static_cast<std::uint64_t>(w));
+            const std::uint64_t v = n == 0 ? lt.v
+                : (op == "rol" ? ((lt.v << n) | (lt.v >> (w - n)))
+                               : ((lt.v >> n) | (lt.v << (w - n))));
+            return Outcome<ExprVal>::good(ExprVal {v & m, w, lt.isSigned});
+        }
+        if (count >= static_cast<std::uint64_t>(w))
+            return failWith<ExprVal>(fail("E_SHIFT", "shift count must be smaller than the width", hint));
+        if (op == "<<") {
+            if (c && lt.isSigned && signedValue(lt) < 0)
+                return failWith<ExprVal>(fail("E_SHIFT", "left shift of a negative value", hint));
+            const bool lost = count > 0 && w < 64 && (lt.v >> (w - count)) != 0;
+            if (lost)
+                ++wraps;
+            return Outcome<ExprVal>::good(ExprVal {(lt.v << count) & m, w, lt.isSigned});
+        }
+        if (lt.isSigned && (lt.v & (std::uint64_t(1) << (w - 1)))) {
+            const std::uint64_t full = widenBits(lt.v, w, true);
+            std::uint64_t shifted = full >> count;
+            if (count > 0)
+                shifted |= ~std::uint64_t(0) << (64 - count);
+            return Outcome<ExprVal>::good(ExprVal {shifted & m, w, lt.isSigned});
+        }
+        return Outcome<ExprVal>::good(ExprVal {lt.v >> count, w, lt.isSigned});
+    }
+
+    Outcome<ExprVal> applyBitwise(const std::string& op, const ExprVal& a, const ExprVal& b)
+    {
+        ++steps;
+        const auto ct = commonType(a, b);
+        const int w = ct.first;
+        const bool sg = ct.second;
+        const ExprVal x = toCommon(a, w, sg);
+        const ExprVal y = toCommon(b, w, sg);
+        const std::uint64_t v = op == "&" ? (x.v & y.v) : op == "^" ? (x.v ^ y.v) : (x.v | y.v);
+        return Outcome<ExprVal>::good(ExprVal {v & maskFor(w), w, sg});
+    }
+
+    bool over(const ArithResult& r, bool sg) const
+    {
+        return r.over && mode == EvalMode::C && !countMode && sg;
+    }
+};
+
+inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bool defaultSigned,
+                                  EvalMode mode = EvalMode::Fixed)
 {
     const std::string hint = "bits u8 0xA5 & 0x0F";
     if (input.size() > kMaxInputChars)
@@ -875,10 +1549,20 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
 
     // A single value: just show every representation. Float literals widen the
     // result to their IEEE-754 container so the whole bit pattern is visible.
-    if (rest.size() == 1) {
+    // A negated float is still a single value ("bits f64 -0.125"); the lexer
+    // splits the sign into its own token, so glue it back on.
+    bool negFloat = false;
+    if (rest.size() == 2 && rest[0] == "-") {
+        LiteralInfo probe;
+        probe.requestFloatWidth = floatWidth;
+        auto probeResult = parseLiteral("-" + rest[1], 64, false, &probe);
+        negFloat = probeResult.success && probe.isFloat;
+    }
+    if (rest.size() == 1 || negFloat) {
+        const std::string lit = negFloat ? "-" + rest[1] : rest[0];
         LiteralInfo li;
         li.requestFloatWidth = floatWidth;
-        auto a = parseLiteral(rest[0], e.width, e.signedType, &li);
+        auto a = parseLiteral(lit, e.width, e.signedType, &li);
         if (!a.success)
             return failWith<BitsEval>(a.failure);
         if (li.isFloat) {
@@ -898,12 +1582,59 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
                                 : "no operation; the value is shown in four bases");
     }
 
-    if (rest.size() != 3)
-        return failWith<BitsEval>(fail("E_SYNTAX", "expected VALUE OP VALUE", hint));
-    const std::string op = lower(rest[1]);
+    // The classic three-token VALUE OP VALUE form keeps its strict per-literal
+    // range checks and shift notes; every other shape goes through the parser.
     static const std::set<std::string> binaryOps = {"&", "|", "^", "<<", ">>", "rol", "ror"};
-    if (!binaryOps.count(op))
-        return failWith<BitsEval>(fail("E_UNKNOWN_OP", "unsupported operator", "bits u8 0xA5 & 0x0F"));
+    const bool classic = rest.size() == 3 && binaryOps.count(lower(rest[1])) != 0;
+    if (!classic) {
+        if (e.isFloat)
+            return failWith<BitsEval>(fail("E_FLOAT_OP", "a float type takes a single value",
+                                           "bits f64 1.5"));
+        const EvalMode emode = explicitIntType ? EvalMode::Fixed : mode;
+        BitsParser parser(rest, emode, e.width, e.signedType, hint);
+        auto parsed = parser.parseOr();
+        if (!parsed.success)
+            return failWith<BitsEval>(parsed.failure);
+        if (!parser.atEnd())
+            return failWith<BitsEval>(fail("E_SYNTAX", "unexpected token after the expression", hint));
+        const ExprVal v = parsed.value;
+        e.unitNote = parser.unitNote;
+        std::string expression;
+        for (const std::string& t : rest)
+            expression += (expression.empty() ? "" : " ") + t;
+        std::string note;
+        if (emode == EvalMode::C) {
+            e.width = v.width;
+            e.signedType = v.isSigned;
+            e.typeName = typeNameFor(v.width, v.isSigned);
+            note = "C promotions: ";
+            if (parser.promos.empty()) {
+                note += "none needed";
+            } else {
+                bool firstPromo = true;
+                for (const std::string& s : parser.promos) {
+                    note += firstPromo ? "" : ", ";
+                    note += s;
+                    firstPromo = false;
+                }
+            }
+            note += "; result type " + e.typeName;
+            if (parser.wraps > 0)
+                note += "; unsigned arithmetic wrapped at " + std::to_string(parser.wraps)
+                        + " step(s)";
+        } else {
+            const std::string tn = typeNameFor(e.width, e.signedType);
+            note = parser.wraps == 0
+                ? "fixed " + tn + ": all " + std::to_string(parser.steps)
+                    + " steps stayed within the type"
+                : "fixed " + tn + ": " + std::to_string(parser.wraps) + " of "
+                    + std::to_string(parser.steps)
+                    + " steps exceeded the type and wrapped (two's complement)";
+        }
+        m = maskFor(e.width);
+        return finish(v.v, v.v, v.v, false, "expr", expression, note);
+    }
+    const std::string op = lower(rest[1]);
 
     LiteralInfo la;
     la.requestFloatWidth = floatWidth;

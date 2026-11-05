@@ -186,18 +186,81 @@ int main()
     CHECK(errorCode(binlab::evalBits("0b102", 32, false)) == "E_BAD_LITERAL", "bits bad binary digit");
     CHECK(errorCode(binlab::evalBits("0o8", 32, false)) == "E_BAD_LITERAL", "bits bad octal digit");
     CHECK(errorCode(binlab::evalBits("u8 256", 32, false)) == "E_RANGE", "bits unsigned overflow");
-    CHECK(errorCode(binlab::evalBits("i8 -129", 32, false)) == "E_RANGE", "bits signed negative overflow");
     CHECK(errorCode(binlab::evalBits("i8 128", 32, false)) == "E_RANGE", "bits signed positive overflow");
-    CHECK(errorCode(binlab::evalBits("u8 -1", 32, false)) == "E_NEGATIVE_UNSIGNED", "bits negative unsigned");
     CHECK(errorCode(binlab::evalBits("u8 1 << 8", 32, false)) == "E_SHIFT", "bits shift >= width");
     CHECK(errorCode(binlab::evalBits("u8 1 >> 8", 32, false)) == "E_SHIFT", "bits right shift >= width");
-    CHECK(errorCode(binlab::evalBits("u8 1 + 2", 32, false)) == "E_UNKNOWN_OP", "bits unsupported operator");
+    CHECK(errorCode(binlab::evalBits("u8 0xA5 +", 32, false)) == "E_SYNTAX", "bits dangling operator");
     CHECK(errorCode(binlab::evalBits("u8 1 2 3 4", 32, false)) == "E_SYNTAX", "bits wrong arity");
     CHECK(errorCode(binlab::evalBits("u8 get 0xA5 8:0", 32, false)) == "E_BAD_RANGE", "bits field range too wide");
     CHECK(errorCode(binlab::evalBits("u8 get 0xA5 4:7", 32, false)) == "E_BAD_RANGE", "bits inverted field range");
     CHECK(errorCode(binlab::evalBits("u8 set 0xA5 7:4 0x10", 32, false)) == "E_RANGE", "bits field value too wide");
     CHECK(errorCode(binlab::evalBits(std::string(17000, 'A'), 32, false)) == "E_INPUT_TOO_LARGE",
           "bits input size cap");
+
+    // ---- bits: general expressions (precedence, associativity, parentheses) ---
+    CHECK(bitsOf("u8 1 + 2 * 3", ok) == 7 && ok, "bits mul binds tighter than add");
+    CHECK(bitsOf("u8 (1 + 2) * 3", ok) == 9 && ok, "bits parentheses regroup");
+    CHECK(bitsOf("u8 1 << 2 + 1", ok) == 8 && ok, "bits add binds tighter than shift");
+    CHECK(bitsOf("u8 0xF & 3 | 4", ok) == 7 && ok, "bits and binds tighter than or");
+    CHECK(bitsOf("u8 1 ^ 3 & 1", ok) == 0 && ok, "bits and binds tighter than xor");
+    CHECK(bitsOf("u16 2 ** 3 ** 2", ok) == 512 && ok, "bits power is right associative");
+    CHECK(bitsOf("i8 -2 ** 2", ok) == 4 && ok, "bits unary minus binds tighter than power");
+    CHECK(bitsOf("u8 (~0) & 0x0F", ok) == 0x0F && ok, "bits complement inside parentheses");
+    CHECK(bitsOf("u8 7 / 2", ok) == 3 && ok, "bits integer division truncates");
+    CHECK(bitsOf("u8 7 % 2", ok) == 1 && ok, "bits modulo");
+    CHECK(bitsOf("u16 2 ** 9", ok) == 512 && ok, "bits power");
+    CHECK(bitsOf("u8 (0xA5)", ok) == 0xA5 && ok, "bits parenthesized single value");
+    CHECK(bitsOf("u8 1 << 8 - 1", ok) == 0x80 && ok, "bits count is a full expression");
+    CHECK(bitsOf("u8 4M + 0", ok) == 4000000 % 256 && ok, "bits unit suffix inside expression");
+    {
+        const auto note = binlab::evalBits("u8 200 + 100", 32, false);
+        CHECK(note.success && note.value.result == 0x2C, "bits fixed-mode add wraps");
+        CHECK(note.value.detail.find("wrapped") != std::string::npos,
+              "bits fixed-mode wrap is reported in the note");
+        const auto signedWrap = binlab::evalBits("i8 -128 - 1", 32, false);
+        CHECK(signedWrap.success && binlab::asSigned(signedWrap.value.result, 8) == 127,
+              "bits fixed-mode signed underflow wraps");
+        const auto trunc = binlab::evalBits("u8 1 << 7", 32, false);
+        CHECK(trunc.success, "bits classic shift still works");
+    }
+    {
+        using EM = binlab::EvalMode;
+        // C mode: promotions, derived result type, signed overflow errors.
+        const auto promoted = binlab::evalBits("1 + 2", 8, false, EM::C);
+        CHECK(promoted.success && promoted.value.result == 3 && promoted.value.typeName == "i32",
+              "bits C mode promotes literals to i32");
+        const auto wide = binlab::evalBits("0xFFFFFFFF + 0", 8, false, EM::C);
+        CHECK(wide.success && wide.value.typeName == "u32" && wide.value.result == 0xFFFFFFFFull,
+              "bits C mode types big literals u32");
+        CHECK(errorCode(binlab::evalBits("2147483647 + 1", 8, false, EM::C)) == "E_RANGE",
+              "bits C mode signed add overflow errors");
+        CHECK(errorCode(binlab::evalBits("9223372036854775807 + 1", 8, false, EM::C)) == "E_RANGE",
+              "bits C mode i64 add overflow errors");
+        CHECK(errorCode(binlab::evalBits("(-9223372036854775807 - 1) / -1", 8, false, EM::C))
+                  == "E_RANGE", "bits C mode INT64_MIN / -1 errors");
+        CHECK(errorCode(binlab::evalBits("2 ** 62", 8, false, EM::C)) == "E_RANGE",
+              "bits C mode power overflow errors");
+        CHECK(errorCode(binlab::evalBits("1 << 40", 8, false, EM::C)) == "E_SHIFT",
+              "bits C mode shift count >= promoted width errors");
+        CHECK(errorCode(binlab::evalBits("1 / 0", 8, false, EM::C)) == "E_DIV_ZERO",
+              "bits C mode division by zero");
+        CHECK(errorCode(binlab::evalBits("2 ** -1", 32, false)) == "E_RANGE",
+              "bits negative exponent errors");
+        // C mode wraps unsigned by definition; the note names it.
+        const auto uwrap = binlab::evalBits("0xFFFFFFFF + 1", 8, false, EM::C);
+        CHECK(uwrap.success && uwrap.value.result == 0, "bits C mode unsigned wrap is defined");
+        // Explicit prefix forces fixed semantics even in C mode.
+        const auto prefixed = binlab::evalBits("u8 200 + 100", 8, false, EM::C);
+        CHECK(prefixed.success && prefixed.value.result == 0x2C && prefixed.value.typeName == "u8",
+              "bits explicit prefix keeps fixed semantics in C mode");
+    }
+    CHECK(errorCode(binlab::evalBits("u8 1 / 0", 32, false)) == "E_DIV_ZERO", "bits fixed divide by zero");
+    CHECK(errorCode(binlab::evalBits("u8 1 << 300", 32, false)) == "E_SHIFT", "bits huge shift count");
+    CHECK(errorCode(binlab::evalBits("u8 (1 + 2", 32, false)) == "E_SYNTAX", "bits unclosed parenthesis");
+    CHECK(errorCode(binlab::evalBits("u8 1.5 + 1", 32, false)) == "E_FLOAT_OP",
+          "bits float literal rejected in expressions");
+    CHECK(errorCode(binlab::evalBits("f32 1.5 + 1", 32, false)) == "E_FLOAT_OP",
+          "bits float prefix takes a single value");
 
     // ---- bits: round-trip property --------------------------------------------
     {
