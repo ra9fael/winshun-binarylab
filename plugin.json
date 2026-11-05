@@ -60,8 +60,9 @@
       "hint": {"zh": "例如 bits u8 0xA5 & 0x0F", "en": "e.g. bits u8 0xA5 & 0x0F"},
       "actions": [
         {"id": "copyPrimary", "title": {"zh": "复制主值", "en": "Copy value"}, "key": "Enter"},
-        {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": "Ctrl+Enter"},
-        {"id": "chainQuery", "title": {"zh": "改写为下一步查询", "en": "Chain follow-up query"}, "key": "Shift+Enter"}
+        {"id": "openEditor", "title": {"zh": "打开二进制工作台", "en": "Open binary workbench"}, "key": "Ctrl+Enter"},
+        {"id": "chainQuery", "title": {"zh": "改写为下一步查询", "en": "Chain follow-up query"}, "key": "Shift+Enter"},
+        {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": ""}
       ]
     },
     {

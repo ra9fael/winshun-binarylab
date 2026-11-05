@@ -1,11 +1,11 @@
 // editor.h - the Binary Lab workbench window for the WinShun plugin.
 //
 // v0.3a: the single-purpose bit editor became a unified workbench shell.
-// One window hosts three modes (bits / bytes / struct) behind top-bar tabs;
-// only bits is interactive in v0.3a, the other two show a placeholder. The
-// shell owns:
-//   * top bar      - mode tabs, settings dropdown, help panel (all former
-//                    floating hint text lives here now);
+// v0.3a3: five top-bar tabs (bits / bytes / struct | settings / help) and a
+// two-row status bar. The shell owns:
+//   * top bar      - 5 tabs; the first three are content modes, the last two
+//                    are real panels that replace the content area (no more
+//                    floating overlays that swallow the first tab click);
 //   * input line   - a native EDIT control holding a SpeedCrunch-style
 //                    expression re-evaluated on every change through the same
 //                    evalBits() the query path uses, so the grid always edits
@@ -13,9 +13,9 @@
 //                    the expression overrides width/signedness;
 //   * result row   - HEX/OCT/BIN/DEC chips + copy-all, all mouse-clickable;
 //                    the Ctrl+C/B/D/O shortcuts stay;
-//   * content area - the interactive bit grid;
-//   * status bar   - mode state | selection/focus | transient feedback
-//                    (green copies fade ~2 s, red parse errors persist).
+//   * content area - the interactive bit grid, or a two-column panel;
+//   * status bar   - row 1: context + focus/feedback; row 2: four labelled,
+//                    clickable parity chips (or a full untruncated error).
 //
 // Threading model (unchanged from the spike): serve() stays on the main
 // thread; the window, its child edit control and all GUI state live on one
@@ -42,7 +42,7 @@
 namespace binlab {
 
 struct EditorSpec {
-    enum class Mode { Bits, Bytes, Struct };
+    enum class Mode { Bits, Bytes, Struct, Settings, Help };
     Mode mode = Mode::Bits;
     std::uint64_t value = 0;       // initial value; the expression overrides it
     int width = 32;                // initial width unless the expression sets one
@@ -51,6 +51,14 @@ struct EditorSpec {
     std::string endian = "le";     // bytes mode (v0.3b)
     int pack = 0;                  // struct mode (v0.3c)
     bool zh = true;                // window language
+
+    // Host settings snapshot shown read-only in the settings tab. The SDK
+    // exposes settingsChanged() but no setter, so the window cannot write
+    // these back; they are a snapshot taken when the window opens.
+    int hostWidth = 32;
+    std::string hostEndian = "le";
+    int hostPack = 0;
+    std::string hostBitsEnter = "copy";
 };
 
 bool openEditorWindow(const EditorSpec& spec, std::string& error);
@@ -79,6 +87,10 @@ struct EditorState {
     std::string endian = "le";
     int pack = 0;
     bool zh = true;
+    int hostWidth = 32;
+    std::string hostEndian = "le";
+    int hostPack = 0;
+    std::string hostBitsEnter = "copy";
     int focusBit = -1;
     bool dragging = false;
     int dragPaint = 0;
@@ -88,17 +100,14 @@ struct EditorState {
     HFONT editFont = nullptr;
     std::string evalError;
 
-    bool settingsOpen = false;
-    bool helpOpen = false;
     std::string msg;
     DWORD msgTick = 0;
 
     // Cached geometry, recomputed by computeLayout().
     int clientW = 0;
     int clientH = 0;
-    RECT rcTabs[3] = {};
-    RECT rcSet = {};
-    RECT rcHelp = {};
+    RECT rcTabs[5] = {};
+    int tabDividerX = 0;       // separator between content modes and tool tabs
     RECT rcExpr = {};
     RECT rcChip[5] = {};
     int resultRows = 1;
@@ -109,6 +118,13 @@ struct EditorState {
     int toolTop = 0;           // width / signedness toolbar row (bits mode)
     RECT rcWidthBtn[4] = {};   // 8 | 16 | 32 | 64
     RECT rcSignBtn[2] = {};    // unsigned | signed
+    RECT rcParity[4] = {};     // status row 2: labelled parity chips
+    int hoverParity = -1;      // chip under the cursor, for the definition tip
+    RECT rcSetWidth[4] = {};   // settings tab: 8 | 16 | 32 | 64
+    RECT rcSetSign[2] = {};    // settings tab: u | i
+    int panelTop = 0;          // content area for the settings/help tabs
+    int panelBottom = 0;
+    int panelCol2 = 0;         // left edge of the right column
     bool suppressEval = false; // set while the toolbar rewrites the type prefix
 };
 
@@ -186,7 +202,11 @@ constexpr int kToolH = 26;      // width / signedness toolbar
 constexpr int kCellH = 32;
 constexpr int kLabelH = 14;
 constexpr int kRowGap = 6;
-constexpr int kStatusH = 24;
+constexpr int kStatusH = 46;       // two rows: context | parity / messages
+constexpr int kStatusRowH = 23;
+constexpr int kPanelContentH = 200; // settings/help two-column content area
+constexpr int kPanelRowH = 26;
+constexpr int kMinClientH = kTopH + kPanelContentH + kStatusH; // 280
 
 const wchar_t* uiFace(bool zh)
 {
@@ -254,9 +274,54 @@ void frameRect(HDC dc, const RECT& r, COLORREF color)
     DeleteObject(SelectObject(dc, old));
 }
 
+// A highlighted (or idle) segmented button, shared by the width toolbar and
+// the settings tab so both always render the same way.
+void drawSegment(HDC dc, const RECT& r, const std::wstring& text, bool active)
+{
+    HBRUSH fill = CreateSolidBrush(active ? kAccent : kBitOff);
+    FillRect(dc, &r, fill);
+    DeleteObject(fill);
+    frameRect(dc, r, kSeparator);
+    drawCenteredText(dc, r, text, active ? kBitOnText : kBitOffText);
+}
+
+const char* tabLabel(int i, bool zh)
+{
+    static const char* const kZh[5] = { "位运算", "字节流", "结构体", "设置", "帮助" };
+    static const char* const kEn[5] = { "Bits", "Bytes", "Struct", "Settings", "Help" };
+    return zh ? kZh[i] : kEn[i];
+}
+
+// One sentence per chip, shown on hover and in the help tab. Keep the two
+// concepts apart: parity (odd/even of the count) and the bit to append.
+std::string parityDefinition(int i, bool zh)
+{
+    static const char* const kZh[4] = {
+        "置 1 位数：当前位宽内值为 1 的位数",
+        "奇偶性：上面这个数是奇数还是偶数",
+        "偶校验位：补上它，让 1 的总数为偶",
+        "奇校验位：补上它，让 1 的总数为奇",
+    };
+    static const char* const kEn[4] = {
+        "ones: count of 1 bits in the active width",
+        "parity: whether that count is odd or even",
+        "even-bit: append it to make the 1 count even",
+        "odd-bit: append it to make the 1 count odd",
+    };
+    return zh ? kZh[i] : kEn[i];
+}
+
 int getBit(std::uint64_t value, int bit)
 {
     return static_cast<int>((value >> bit) & 1u);
+}
+
+int popcount(std::uint64_t value, int width)
+{
+    int ones = 0;
+    for (int b = 0; b < width; ++b)
+        ones += getBit(value, b);
+    return ones;
 }
 
 void setBit(std::uint64_t& value, int width, int bit, int v)
@@ -308,14 +373,16 @@ void computeLayout(HDC dc)
     HFONT tabFont = uiFont(12, false, s.zh);
     const int tabPad = 12;
     int x = 12;
-    const char* tabs[3] = { s.zh ? "位运算" : "Bits",
-                            s.zh ? "字节流" : "Bytes",
-                            s.zh ? "结构体" : "Struct" };
-    for (int i = 0; i < 3; ++i) {
-        const int tw = textWidth(dc, tabFont, wideFromUtf8(tabs[i]));
+    for (int i = 0; i < 5; ++i) {
+        if (i == 3) {
+            s.tabDividerX = x + 2;
+            x += 14; // visual gap between content modes and tool panels
+        }
+        const int tw = textWidth(dc, tabFont, wideFromUtf8(tabLabel(i, s.zh)));
         s.rcTabs[i] = { x, 0, x + tw + 2 * tabPad, kTopH };
         x += tw + 2 * tabPad + 2;
     }
+    DeleteObject(tabFont);
 
     HFONT chipLabelFont = uiFont(11, false, s.zh);
     HFONT chipValueFont = monoFont(13, false);
@@ -361,17 +428,9 @@ void computeLayout(HDC dc)
     }
     s.clientW = clientW;
 
-    // Settings/help buttons hug the right edge of the final client width.
-    {
-        const int setW = textWidth(dc, tabFont, wideFromUtf8(s.zh ? "设置 ▾" : "Settings ▾")) + 16;
-        const int helpW = textWidth(dc, tabFont, wideFromUtf8(s.zh ? "帮助 ?" : "Help ?")) + 16;
-        int right = clientW - 12;
-        s.rcHelp = { right - helpW, 0, right, kTopH };
-        right -= helpW + 8;
-        s.rcSet = { right - setW, 0, right, kTopH };
-    }
-    DeleteObject(tabFont);
-
+    // Five tabs fit both languages in the narrowest window (measured:
+    // 298 px zh / 287 px en at 480 px client width), so the right end of the
+    // top bar is deliberately left empty.
     s.resultRows = 0;
     if (bits) {
         const int chipsTop = kTopH + kExprH + 4;
@@ -419,57 +478,81 @@ void computeLayout(HDC dc)
     // Fill the width: 8 cells (each drawn 4px narrower than its pitch) plus
     // the nibble gap span exactly clientW - 2 * margin.
     s.cellW = std::max(kMinCellW, (s.clientW - 2 * kGridMargin - kNibbleGap + 4) / 8);
-    s.clientH = s.gridTop + s.gridRows * (kLabelH + kCellH + kRowGap) + 8 + kStatusH;
+    if (bits) {
+        s.clientH = s.gridTop + s.gridRows * (kLabelH + kCellH + kRowGap) + 8 + kStatusH;
+        s.panelTop = s.panelBottom = 0;
+        s.panelCol2 = 0;
+        for (RECT& r : s.rcSetWidth)
+            r = {};
+        for (RECT& r : s.rcSetSign)
+            r = {};
+    } else {
+        // All non-bits tabs share one fixed content height, so switching
+        // between them never produces a small resize jitter.
+        s.clientH = kTopH + kPanelContentH + kStatusH;
+        s.panelTop = kTopH + 8;
+        s.panelBottom = kTopH + kPanelContentH;
+        s.panelCol2 = s.clientW / 2 + 6;
+        const int rowTop = s.panelTop + 34;
+        const int bx = 16 + 62;
+        for (int i = 0; i < 4; ++i)
+            s.rcSetWidth[i] = { bx + i * 36, rowTop + 2,
+                                bx + i * 36 + 34, rowTop + kPanelRowH - 2 };
+        for (int i = 0; i < 2; ++i)
+            s.rcSetSign[i] = { bx + i * 48, rowTop + kPanelRowH + 2,
+                               bx + i * 48 + 44, rowTop + 2 * kPanelRowH - 2 };
+    }
+    s.clientH = std::max(s.clientH, kMinClientH);
     s.rcExpr = { 64, kTopH + (kExprH - 24) / 2, s.clientW - 12, kTopH + (kExprH + 24) / 2 };
+
+    // Status row 2: four equal chips spanning the full client width.
+    const int pcGap = 6;
+    const int pcW = (s.clientW - 24 - 3 * pcGap) / 4;
+    const int pcTop = s.clientH - kStatusRowH + 2;
+    for (int i = 0; i < 4; ++i) {
+        const int px = 12 + i * (pcW + pcGap);
+        s.rcParity[i] = { px, pcTop, px + pcW, s.clientH - 2 };
+    }
 }
 
 // Emit the geometry for the drive scripts (they parse stderr rather than
 // duplicating the metrics above).
+std::string rectStr(const RECT& r)
+{
+    char b[80];
+    std::snprintf(b, sizeof(b), "%d,%d,%d,%d",
+                  static_cast<int>(r.left), static_cast<int>(r.top),
+                  static_cast<int>(rcWidth(r)), static_cast<int>(r.bottom - r.top));
+    return b;
+}
+
 void logLayout()
 {
     EditorState& s = state();
-    char line[768];
-    if (s.mode == EditorSpec::Mode::Bits) {
-        std::snprintf(line, sizeof(line),
-                      "ra9fael.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d cellW=%d "
-                      "w8=%d,%d,%d,%d w64=%d,%d,%d,%d sgn1=%d,%d,%d,%d "
-                      "chip0=%d,%d,%d,%d chip1=%d,%d,%d,%d chip2=%d,%d,%d,%d chip3=%d,%d,%d,%d chip4=%d,%d,%d,%d "
-                      "set=%d,%d,%d,%d help=%d,%d,%d,%d tab1=%d,%d,%d,%d",
-                      s.clientW, s.clientH, s.gridLeft, s.gridTop, s.cellW,
-                      static_cast<int>(s.rcWidthBtn[0].left), static_cast<int>(s.rcWidthBtn[0].top),
-                      static_cast<int>(rcWidth(s.rcWidthBtn[0])), kToolH,
-                      static_cast<int>(s.rcWidthBtn[3].left), static_cast<int>(s.rcWidthBtn[3].top),
-                      static_cast<int>(rcWidth(s.rcWidthBtn[3])), kToolH,
-                      static_cast<int>(s.rcSignBtn[1].left), static_cast<int>(s.rcSignBtn[1].top),
-                      static_cast<int>(rcWidth(s.rcSignBtn[1])), kToolH,
-                      static_cast<int>(s.rcChip[0].left), static_cast<int>(s.rcChip[0].top),
-                      static_cast<int>(rcWidth(s.rcChip[0])), static_cast<int>(s.rcChip[0].bottom - s.rcChip[0].top),
-                      static_cast<int>(s.rcChip[1].left), static_cast<int>(s.rcChip[1].top),
-                      static_cast<int>(rcWidth(s.rcChip[1])), static_cast<int>(s.rcChip[1].bottom - s.rcChip[1].top),
-                      static_cast<int>(s.rcChip[2].left), static_cast<int>(s.rcChip[2].top),
-                      static_cast<int>(rcWidth(s.rcChip[2])), static_cast<int>(s.rcChip[2].bottom - s.rcChip[2].top),
-                      static_cast<int>(s.rcChip[3].left), static_cast<int>(s.rcChip[3].top),
-                      static_cast<int>(rcWidth(s.rcChip[3])), static_cast<int>(s.rcChip[3].bottom - s.rcChip[3].top),
-                      static_cast<int>(s.rcChip[4].left), static_cast<int>(s.rcChip[4].top),
-                      static_cast<int>(rcWidth(s.rcChip[4])), static_cast<int>(s.rcChip[4].bottom - s.rcChip[4].top),
-                      static_cast<int>(s.rcSet.left), static_cast<int>(s.rcSet.top),
-                      static_cast<int>(rcWidth(s.rcSet)), static_cast<int>(s.rcSet.bottom - s.rcSet.top),
-                      static_cast<int>(s.rcHelp.left), static_cast<int>(s.rcHelp.top),
-                      static_cast<int>(rcWidth(s.rcHelp)), static_cast<int>(s.rcHelp.bottom - s.rcHelp.top),
-                      static_cast<int>(s.rcTabs[1].left), static_cast<int>(s.rcTabs[1].top),
-                      static_cast<int>(rcWidth(s.rcTabs[1])), static_cast<int>(s.rcTabs[1].bottom - s.rcTabs[1].top));
-    } else {
-        std::snprintf(line, sizeof(line),
-                      "ra9fael.binarylab: layout: clientW=%d clientH=%d gridLeft=%d gridTop=%d chip0=none "
-                      "set=%d,%d,%d,%d help=%d,%d,%d,%d tab1=%d,%d,%d,%d",
-                      s.clientW, s.clientH, s.gridLeft, s.gridTop,
-                      static_cast<int>(s.rcSet.left), static_cast<int>(s.rcSet.top),
-                      static_cast<int>(rcWidth(s.rcSet)), static_cast<int>(s.rcSet.bottom - s.rcSet.top),
-                      static_cast<int>(s.rcHelp.left), static_cast<int>(s.rcHelp.top),
-                      static_cast<int>(rcWidth(s.rcHelp)), static_cast<int>(s.rcHelp.bottom - s.rcHelp.top),
-                      static_cast<int>(s.rcTabs[1].left), static_cast<int>(s.rcTabs[1].top),
-                      static_cast<int>(rcWidth(s.rcTabs[1])), static_cast<int>(s.rcTabs[1].bottom - s.rcTabs[1].top));
+    const bool bits = s.mode == EditorSpec::Mode::Bits;
+    std::string line = "ra9fael.binarylab: layout: clientW=" + std::to_string(s.clientW)
+        + " clientH=" + std::to_string(s.clientH)
+        + " gridLeft=" + std::to_string(s.gridLeft)
+        + " gridTop=" + std::to_string(s.gridTop)
+        + " cellW=" + std::to_string(s.cellW)
+        + " mode=" + std::to_string(static_cast<int>(s.mode))
+        + " statusTop=" + std::to_string(s.clientH - kStatusH)
+        + " tab0=" + rectStr(s.rcTabs[0])
+        + " tab1=" + rectStr(s.rcTabs[1])
+        + " tab3=" + rectStr(s.rcTabs[3])
+        + " tab4=" + rectStr(s.rcTabs[4])
+        + " chip0=" + (bits ? rectStr(s.rcChip[0]) : std::string("none"));
+    if (bits) {
+        for (int i = 1; i < 5; ++i)
+            line += " chip" + std::to_string(i) + "=" + rectStr(s.rcChip[i]);
+        line += " w8=" + rectStr(s.rcWidthBtn[0])
+              + " w64=" + rectStr(s.rcWidthBtn[3])
+              + " sgn1=" + rectStr(s.rcSignBtn[1]);
+        for (int i = 0; i < 4; ++i)
+            line += " parity" + std::to_string(i) + "=" + rectStr(s.rcParity[i]);
     }
+    line += " setw0=" + rectStr(s.rcSetWidth[0])
+          + " setsgn1=" + rectStr(s.rcSetSign[1]);
     winshun::debug(line);
 }
 
@@ -575,6 +658,32 @@ void copyBase(HWND hwnd, char which, const char* label)
     InvalidateRect(hwnd, nullptr, TRUE);
 }
 
+// Status-bar parity chips copy just their value (5 / odd / 1 / 0), not a
+// full sentence, so the result can be pasted straight into a register field.
+void copyParity(HWND hwnd, int index, const std::string& value)
+{
+    EditorState& s = state();
+    const bool ok = copyToClipboard(hwnd, value);
+    static const char* const kNames[4] = { "ONES", "PARITY", "EVEN-BIT", "ODD-BIT" };
+    winshun::debug(std::string("ra9fael.binarylab: copyParity ") + kNames[index]
+                   + " value=" + value + " ok=" + (ok ? "1" : "0"));
+    s.msg = ok ? (s.zh ? std::string("已复制 ") + kNames[index] : std::string("Copied ") + kNames[index])
+               : (s.zh ? "复制失败" : "copy failed");
+    s.msgTick = GetTickCount();
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+void parityValues(std::string out[4])
+{
+    EditorState& s = state();
+    const int ones = popcount(s.value & binlab::maskFor(s.width), s.width);
+    const bool even = ones % 2 == 0;
+    out[0] = std::to_string(ones);
+    out[1] = s.zh ? (even ? "偶" : "奇") : (even ? "even" : "odd");
+    out[2] = even ? "0" : "1"; // bit to append for an even number of ones
+    out[3] = even ? "1" : "0"; // bit to append for an odd number of ones
+}
+
 // Re-evaluate the expression line. Keep the last good value on a parse error
 // and surface the failure in the status bar instead of blanking the window.
 void evaluate()
@@ -605,6 +714,9 @@ void evaluate()
         }
     } else {
         s.evalError = r.failure.code + ": " + r.failure.message;
+        // The status bar shows this string verbatim; log it so the drive
+        // script can assert that no character is trimmed away.
+        winshun::debug("ra9fael.binarylab: evalError " + s.evalError);
     }
     InvalidateRect(s.hwnd, nullptr, TRUE);
 }
@@ -656,12 +768,8 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     EditorState& s = state();
     if (msg == WM_KEYDOWN) {
         if (wp == VK_ESCAPE) {
-            if (s.settingsOpen || s.helpOpen) {
-                s.settingsOpen = s.helpOpen = false;
-                InvalidateRect(s.hwnd, nullptr, TRUE);
-            } else if (s.hwnd) {
+            if (s.hwnd)
                 DestroyWindow(s.hwnd);
-            }
             return 0;
         }
         if (wp == VK_TAB) {
@@ -672,48 +780,9 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     return CallWindowProc(s.origEditProc, h, msg, wp, lp);
 }
 
-// ---- overlay panels (drawn inside the client, closed by clicking away) ------
-
-struct SettingRow {
-    std::string label;
-    std::string value;
-    bool enabled;
-};
-
-std::vector<SettingRow> settingRows()
-{
-    EditorState& s = state();
-    return {
-        { s.zh ? "位宽" : "Width", std::to_string(s.width), true },
-        { s.zh ? "符号" : "Signedness",
-          s.isSigned ? (s.zh ? "有符号" : "signed") : (s.zh ? "无符号" : "unsigned"), true },
-        // SpeedCrunch semantics choices arrive with the v0.3 expression work.
-        { s.zh ? "^ 语义" : "^ semantics", "XOR", false },
-        { s.zh ? "端序" : "Endianness", s.endian == "be" ? "BE" : "LE", false }, // bytes, v0.3b
-        { "pack", s.pack == 0 ? "natural" : std::to_string(s.pack), false },    // struct, v0.3c
-    };
-}
-
-constexpr int kOverlayRowH = 24;
-
-RECT overlayRect(int rows, int widthHint)
-{
-    EditorState& s = state();
-    const int h = 34 + rows * kOverlayRowH + 12;
-    const int x = (s.clientW - widthHint) / 2;
-    const int y = kTopH + 6;
-    return { x, y, x + widthHint, y + h };
-}
-
-RECT settingsRect()
-{
-    return overlayRect(static_cast<int>(settingRows().size()), 260);
-}
-
-RECT helpRect()
-{
-    return overlayRect(8, 460);
-}
+// ---- content-area panels (settings / help tabs) ---------------------------
+// These replace the old floating overlays: they occupy the whole content area
+// and never swallow a click meant for a tab.
 
 void drawOverlayPanel(HDC dc, const RECT& rc)
 {
@@ -723,55 +792,150 @@ void drawOverlayPanel(HDC dc, const RECT& rc)
     frameRect(dc, rc, kSeparator);
 }
 
-void paintSettings(HDC dc, const RECT& rc)
+void drawRowStrip(HDC dc, const RECT& r)
+{
+    drawOverlayPanel(dc, r);
+}
+
+// A status-row chip: label on the left, value on the right, both in one flat
+// surface. Text is measured by the font already selected into dc.
+void drawParityChip(HDC dc, const RECT& r, const std::wstring& label, const std::wstring& value)
+{
+    HBRUSH fill = CreateSolidBrush(kBitOff);
+    FillRect(dc, &r, fill);
+    DeleteObject(fill);
+    frameRect(dc, r, kSeparator);
+    RECT t { r.left + 8, r.top, r.right - 8, r.bottom };
+    drawLeftText(dc, t, label, kLabelText);
+    SetTextColor(dc, kValueText);
+    DrawTextW(dc, value.c_str(), -1, &t, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+}
+
+void paintSettingsContent(HDC dc)
 {
     EditorState& s = state();
-    drawOverlayPanel(dc, rc);
     HFONT font = uiFont(12, false, s.zh);
     HGDIOBJ old = SelectObject(dc, font);
-    RECT title { rc.left + 14, rc.top + 8, rc.right - 14, rc.top + 26 };
-    drawLeftText(dc, title, wideFromUtf8(s.zh ? "设置" : "Settings"), kPanelText);
-    const std::vector<SettingRow> rows = settingRows();
-    int y = rc.top + 34;
-    const int midX = rc.left + rcWidth(rc) / 2;
-    for (const SettingRow& row : rows) {
-        RECT rl { rc.left + 14, y, midX, y + kOverlayRowH };
-        RECT rv { midX, y, rc.right - 14, y + kOverlayRowH };
-        drawLeftText(dc, rl, wideFromUtf8(row.label), row.enabled ? kPanelText : kLabelText);
-        SetTextColor(dc, row.enabled ? kAccent : kLabelText);
-        DrawTextW(dc, wideFromUtf8(row.value).c_str(), -1, &rv,
-                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-        y += kOverlayRowH;
+    const int left = 16;
+    const int right = s.clientW - 16;
+    const int mid = s.panelCol2;
+    const int colW = mid - left - 12;
+
+    RECT t1 { left, s.panelTop, left + colW, s.panelTop + 24 };
+    RECT t2 { mid, s.panelTop, right, s.panelTop + 24 };
+    drawLeftText(dc, t1, wideFromUtf8(s.zh ? "本次会话（点击即时生效）" : "This session (click to apply)"), kPanelText);
+    drawLeftText(dc, t2, wideFromUtf8(s.zh ? "插件设置（只读）" : "Plugin settings (read-only)"), kPanelText);
+
+    const int rowTop = s.panelTop + 34;
+    const char* labels[5] = {
+        s.zh ? "位宽" : "Width", s.zh ? "符号" : "Sign", s.zh ? "^ 语义" : "^ semantics",
+        s.zh ? "端序" : "Endian", s.zh ? "语言" : "Language",
+    };
+    const std::string values[5] = {
+        "", "", "XOR",
+        std::string(s.endian == "be" ? "BE" : "LE") + " · pack "
+            + (s.pack == 0 ? "natural" : std::to_string(s.pack)),
+        s.zh ? "跟随宿主" : "follows host",
+    };
+    for (int i = 0; i < 5; ++i) {
+        const int y = rowTop + i * kPanelRowH;
+        RECT r { left, y, left + colW, y + kPanelRowH - 2 };
+        drawRowStrip(dc, r);
+        RECT rl { r.left + 8, r.top, r.left + 62, r.bottom };
+        drawLeftText(dc, rl, wideFromUtf8(labels[i]), kLabelText);
+        if (i >= 2) {
+            RECT rv { r.left + 62, r.top, r.right - 8, r.bottom };
+            SetTextColor(dc, kPanelText);
+            DrawTextW(dc, wideFromUtf8(values[i]).c_str(), -1, &rv,
+                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        }
     }
+    static const int kWidths[4] = { 8, 16, 32, 64 };
+    for (int i = 0; i < 4; ++i)
+        drawSegment(dc, s.rcSetWidth[i], std::to_wstring(kWidths[i]), s.width == kWidths[i]);
+    drawSegment(dc, s.rcSetSign[0], L"u", !s.isSigned);
+    drawSegment(dc, s.rcSetSign[1], L"i", s.isSigned);
+
+    const char* hostLabels[4] = { "defaultWidth", "defaultEndian", "defaultPack", "bitsEnter" };
+    const std::string hostValues[4] = {
+        std::to_string(s.hostWidth), s.hostEndian,
+        s.hostPack == 0 ? "0 (natural)" : std::to_string(s.hostPack), s.hostBitsEnter,
+    };
+    for (int i = 0; i < 4; ++i) {
+        const int y = rowTop + i * kPanelRowH;
+        RECT r { mid, y, right, y + kPanelRowH - 2 };
+        drawRowStrip(dc, r);
+        RECT rl { r.left + 8, r.top, r.right - 80, r.bottom };
+        RECT rv { r.right - 80, r.top, r.right - 8, r.bottom };
+        drawLeftText(dc, rl, wideFromUtf8(hostLabels[i]), kLabelText);
+        SetTextColor(dc, kPanelText);
+        DrawTextW(dc, wideFromUtf8(hostValues[i]).c_str(), -1, &rv,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
+    RECT hint { mid, rowTop + 4 * kPanelRowH, right, rowTop + 5 * kPanelRowH };
+    drawLeftText(dc, hint, wideFromUtf8(s.zh ? "在 WinShun 插件设置中修改" : "Change in WinShun plugin settings"), kLabelText);
     SelectObject(dc, old);
     DeleteObject(font);
 }
 
-void paintHelp(HDC dc, const RECT& rc)
+void paintHelpContent(HDC dc)
 {
     EditorState& s = state();
-    drawOverlayPanel(dc, rc);
-    HFONT font = uiFont(12, false, s.zh);
-    HGDIOBJ old = SelectObject(dc, font);
-    RECT title { rc.left + 14, rc.top + 8, rc.right - 14, rc.top + 26 };
-    drawLeftText(dc, title, wideFromUtf8(s.zh ? "帮助 · 语法与快捷键" : "Help · syntax and keys"), kPanelText);
-    const char* lines[] = {
-        s.zh ? "表达式：0x/0b/0o 进制前缀 · & | ^ ~ << >>" : "Expr: 0x/0b/0o prefixes · & | ^ ~ << >>",
-        s.zh ? "        rol/ror 循环移位 · @ 按位重解释 · 7:4 位段" : "        rol/ror rotates · @ reinterpret · 7:4 fields",
-        s.zh ? "        get/set/clear/toggle 0xA5 7:4 [value]" : "        get/set/clear/toggle 0xA5 7:4 [value]",
-        s.zh ? "鼠标：点击位格翻转 · 拖动涂抹 · 点击读数复制" : "Mouse: click toggles · drag paints · click a chip to copy",
-        s.zh ? "键盘：方向键移动焦点 · 空格翻转" : "Keys: arrows move focus · Space toggles",
-        s.zh ? "        Ctrl+C/B/D/O 复制 HEX/OCT/BIN/DEC" : "        Ctrl+C/B/D/O copy HEX/OCT/BIN/DEC",
-        s.zh ? "        Tab 回到表达式 · Esc 关闭" : "        Tab returns to the expression · Esc closes",
-        s.zh ? "设置：顶部位宽/符号按钮随时切换；类型前缀（如 u8）同步改写" : "Settings: toolbar switches width/sign; a type prefix (u8) is kept in sync",
+    HFONT font = uiFont(11, false, s.zh);
+    HFONT titleFont = uiFont(12, true, s.zh);
+    HGDIOBJ old = SelectObject(dc, titleFont);
+    const int left = 16;
+    const int right = s.clientW - 16;
+    const int mid = s.panelCol2;
+
+    RECT t1 { left, s.panelTop, mid - 12, s.panelTop + 20 };
+    RECT t2 { mid, s.panelTop, right, s.panelTop + 20 };
+    drawLeftText(dc, t1, wideFromUtf8(s.zh ? "语法" : "Syntax"), kPanelText);
+    drawLeftText(dc, t2, wideFromUtf8(s.zh ? "鼠标与键盘" : "Mouse and keys"), kPanelText);
+
+    const char* l[4] = {
+        s.zh ? "0x / 0b / 0o  进制前缀" : "0x / 0b / 0o radix prefixes",
+        s.zh ? "& | ^ ~ << >>   (^ = XOR)" : "& | ^ ~ << >>    (^ = XOR)",
+        s.zh ? "rol / ror  @  7:4  get/set" : "rol / ror  @  7:4  get/set",
+        s.zh ? "u8/u16/u32/u64/i8... 前缀" : "u8/u16/u32/u64/i8... type prefix",
     };
-    int y = rc.top + 34;
-    for (const char* line : lines) {
-        RECT lr { rc.left + 14, y, rc.right - 14, y + 22 };
-        drawLeftText(dc, lr, wideFromUtf8(line), kLabelText);
-        y += 22;
+    const char* r[4] = {
+        s.zh ? "点击位格翻转 · 拖动涂抹" : "Click toggles · drag paints",
+        s.zh ? "点击读数 / chip 复制" : "Click chips / parity to copy",
+        s.zh ? "方向键移动 · 空格翻转" : "Arrows move · Space toggles",
+        s.zh ? "Ctrl+C/B/D/O · Tab · Esc" : "Ctrl+C/B/D/O · Tab · Esc",
+    };
+    SelectObject(dc, font);
+    for (int i = 0; i < 4; ++i) {
+        const int y = s.panelTop + 22 + i * 22;
+        RECT lr { left, y, mid - 12, y + 20 };
+        RECT rr { mid, y, right, y + 20 };
+        drawLeftText(dc, lr, wideFromUtf8(l[i]), kLabelText);
+        drawLeftText(dc, rr, wideFromUtf8(r[i]), kLabelText);
+    }
+
+    const int sepY = s.panelTop + 112;
+    HGDIOBJ pen = SelectObject(dc, CreatePen(PS_SOLID, 1, kSeparator));
+    MoveToEx(dc, left, sepY, nullptr);
+    LineTo(dc, right, sepY);
+    DeleteObject(SelectObject(dc, pen));
+
+    SelectObject(dc, titleFont);
+    RECT t3 { left, s.panelTop + 116, right, s.panelTop + 136 };
+    drawLeftText(dc, t3, wideFromUtf8(s.zh ? "校验术语" : "Parity terms"), kPanelText);
+    const char* b[2] = {
+        s.zh ? "置 1 位数 = 当前位宽内 1 的个数     奇偶性 = 该数是奇还是偶"
+             : "ones = count of 1 bits in the width     parity = odd/even of that count",
+        s.zh ? "偶校验位 = 补它使 1 的总数为偶      奇校验位 = 补它使 1 的总数为奇"
+             : "even-bit = append for an even 1 count   odd-bit = append for an odd 1 count",
+    };
+    SelectObject(dc, font);
+    for (int i = 0; i < 2; ++i) {
+        RECT br { left, s.panelTop + 138 + i * 20, right, s.panelTop + 158 + i * 20 };
+        drawLeftText(dc, br, wideFromUtf8(b[i]), kLabelText);
     }
     SelectObject(dc, old);
+    DeleteObject(titleFont);
     DeleteObject(font);
 }
 
@@ -815,12 +979,9 @@ void paint(HWND hwnd)
         DeleteObject(SelectObject(mem, old));
     }
     SelectObject(mem, tabFont);
-    const char* tabs[3] = { s.zh ? "位运算" : "Bits",
-                            s.zh ? "字节流" : "Bytes",
-                            s.zh ? "结构体" : "Struct" };
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 5; ++i) {
         const bool active = static_cast<int>(s.mode) == i;
-        drawCenteredText(mem, s.rcTabs[i], wideFromUtf8(tabs[i]), active ? kPanelText : kLabelText);
+        drawCenteredText(mem, s.rcTabs[i], wideFromUtf8(tabLabel(i, s.zh)), active ? kPanelText : kLabelText);
         if (active) {
             HGDIOBJ old = SelectObject(mem, CreatePen(PS_SOLID, 2, kAccent));
             MoveToEx(mem, s.rcTabs[i].left + 8, kTopH - 2, nullptr);
@@ -828,8 +989,12 @@ void paint(HWND hwnd)
             DeleteObject(SelectObject(mem, old));
         }
     }
-    drawCenteredText(mem, s.rcSet, wideFromUtf8(s.zh ? "设置 ▾" : "Settings ▾"), kLabelText);
-    drawCenteredText(mem, s.rcHelp, wideFromUtf8(s.zh ? "帮助 ?" : "Help ?"), kLabelText);
+    {
+        HGDIOBJ old = SelectObject(mem, CreatePen(PS_SOLID, 1, kSeparator));
+        MoveToEx(mem, s.tabDividerX, 8, nullptr);
+        LineTo(mem, s.tabDividerX, kTopH - 8);
+        DeleteObject(SelectObject(mem, old));
+    }
 
     // ---- expression row ----
     if (bits) {
@@ -871,18 +1036,11 @@ void paint(HWND hwnd)
         drawLeftText(mem, wl, wideFromUtf8(s.zh ? "位宽" : "Width"), kLabelText);
         RECT sgl { s.rcWidthBtn[3].right + 20, s.toolTop, s.rcSignBtn[0].left, s.toolTop + kToolH };
         drawLeftText(mem, sgl, wideFromUtf8(s.zh ? "符号" : "Sign"), kLabelText);
-        auto segment = [&](const RECT& r, const std::wstring& text, bool active) {
-            HBRUSH fill = CreateSolidBrush(active ? kAccent : kBitOff);
-            FillRect(mem, &r, fill);
-            DeleteObject(fill);
-            frameRect(mem, r, kSeparator);
-            drawCenteredText(mem, r, text, active ? kBitOnText : kBitOffText);
-        };
         static const int kWidths[4] = { 8, 16, 32, 64 };
         for (int i = 0; i < 4; ++i)
-            segment(s.rcWidthBtn[i], std::to_wstring(kWidths[i]), s.width == kWidths[i]);
-        segment(s.rcSignBtn[0], wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"), !s.isSigned);
-        segment(s.rcSignBtn[1], wideFromUtf8(s.zh ? "有符号 i" : "signed i"), s.isSigned);
+            drawSegment(mem, s.rcWidthBtn[i], std::to_wstring(kWidths[i]), s.width == kWidths[i]);
+        drawSegment(mem, s.rcSignBtn[0], wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"), !s.isSigned);
+        drawSegment(mem, s.rcSignBtn[1], wideFromUtf8(s.zh ? "有符号 i" : "signed i"), s.isSigned);
         SelectObject(mem, statusFont);
         DeleteObject(toolFont);
     }
@@ -923,6 +1081,10 @@ void paint(HWND hwnd)
                 }
             }
         }
+    } else if (s.mode == EditorSpec::Mode::Settings) {
+        paintSettingsContent(mem);
+    } else if (s.mode == EditorSpec::Mode::Help) {
+        paintHelpContent(mem);
     } else {
         SelectObject(mem, statusFont);
         const std::string line1 = s.mode == EditorSpec::Mode::Bytes
@@ -936,15 +1098,18 @@ void paint(HWND hwnd)
         drawCenteredText(mem, l2, wideFromUtf8(line2), kLabelText);
     }
 
-    // ---- status bar ----
-    RECT statusRect { 0, h - kStatusH, w, h };
+    // ---- status bar: row 1 = context + focus/feedback, row 2 = parity ----
+    const int statusTop = h - kStatusH;
+    RECT statusRect { 0, statusTop, w, h };
     panel = CreateSolidBrush(kPanel);
     FillRect(mem, &statusRect, panel);
     DeleteObject(panel);
     {
         HGDIOBJ old = SelectObject(mem, CreatePen(PS_SOLID, 1, kSeparator));
-        MoveToEx(mem, 0, h - kStatusH, nullptr);
-        LineTo(mem, w, h - kStatusH);
+        MoveToEx(mem, 0, statusTop, nullptr);
+        LineTo(mem, w, statusTop);
+        MoveToEx(mem, 0, statusTop + kStatusRowH, nullptr);
+        LineTo(mem, w, statusTop + kStatusRowH);
         DeleteObject(SelectObject(mem, old));
     }
     SelectObject(mem, statusFont);
@@ -955,53 +1120,59 @@ void paint(HWND hwnd)
     } else if (s.mode == EditorSpec::Mode::Bytes) {
         left = s.zh ? "字节流 · 端序 " : "bytes · endian ";
         left += s.endian == "be" ? "BE" : "LE";
-    } else {
+    } else if (s.mode == EditorSpec::Mode::Struct) {
         left = std::string("pack=") + (s.pack == 0 ? "natural" : std::to_string(s.pack));
+    } else if (s.mode == EditorSpec::Mode::Settings) {
+        left = s.zh ? "设置 · 本次会话生效" : "Settings · this session only";
+    } else {
+        left = s.zh ? "帮助 · 语法与快捷键" : "Help · syntax and keys";
     }
-    RECT sl { 12, statusRect.top, w / 2 - 70, h };
+    // Hovering a parity chip swaps the context text for its definition. This
+    // keeps the explanation inside the status bar instead of floating a box
+    // over the bottom row of bit cells.
+    if (bits && s.hoverParity >= 0 && s.evalError.empty())
+        left = parityDefinition(s.hoverParity, s.zh);
+    RECT sl { 12, statusTop, w - 200, statusTop + kStatusRowH };
     drawLeftText(mem, sl, wideFromUtf8(left), kLabelText);
 
-    std::string mid;
-    if (bits) {
-        // Live parity over the active width: popcount plus even/odd.
-        const std::uint64_t v = s.value & binlab::maskFor(s.width);
-        int ones = 0;
-        for (int b = 0; b < s.width; ++b)
-            ones += getBit(v, b);
-        const bool even = ones % 2 == 0;
-        mid = s.zh ? std::string("1 的个数 ") + std::to_string(ones) + " · " + (even ? "偶校验位 0" : "偶校验位 1")
-                   : std::string("ones ") + std::to_string(ones) + " · " + (even ? "even, parity 0" : "odd, parity 1");
-        if (s.focusBit >= 0)
-            mid += (s.zh ? " · 位" : " · bit") + std::to_string(s.focusBit) + "="
-                 + std::to_string(getBit(s.value, s.focusBit));
-    }
-    RECT sm { w / 2 - 70, statusRect.top, w - 190, h };
-    drawCenteredText(mem, sm, wideFromUtf8(mid), kLabelText);
-
-    // Right slot: a parse error persists (red); a copied message fades (green).
     const bool freshMsg = !s.msg.empty() && GetTickCount() - s.msgTick < kMsgFadeMs;
-    RECT sr { w - 190, statusRect.top, w - 12, h };
-    if (!s.evalError.empty()) {
-        std::wstring err = wideFromUtf8(s.evalError);
-        const int maxW = rcWidth(sr) - 6;
-        SetTextColor(mem, kErrText);
-        if (textWidth(mem, statusFont, err) > maxW) {
-            // Trim from the left: the tail carries the message, the code
-            // prefix is the least important part.
-            while (err.size() > 4 && textWidth(mem, statusFont, L"…" + err) > maxW)
-                err.erase(err.begin());
-            err.insert(err.begin(), L'…');
-        }
-        DrawTextW(mem, err.c_str(), -1, &sr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-    } else if (freshMsg) {
-        drawCenteredText(mem, sr, wideFromUtf8(s.msg), kOkText);
-    }
+    std::string right1;
+    if (freshMsg)
+        right1 = s.msg;
+    else if (bits && s.focusBit >= 0)
+        right1 = (s.zh ? "焦点 位 " : "focus bit ") + std::to_string(s.focusBit)
+               + " = " + std::to_string(getBit(s.value, s.focusBit));
+    else
+        right1 = "v0.3.0";
+    RECT sr1 { w - 200, statusTop, w - 12, statusTop + kStatusRowH };
+    drawCenteredText(mem, sr1, wideFromUtf8(right1), freshMsg ? kOkText : kLabelText);
 
-    // ---- overlays on top of everything ----
-    if (s.settingsOpen)
-        paintSettings(mem, settingsRect());
-    if (s.helpOpen)
-        paintHelp(mem, helpRect());
+    const int row2 = statusTop + kStatusRowH;
+    if (!s.evalError.empty()) {
+        // Full text, no trimming: a typical error measures 229 px and the
+        // narrowest window still offers 456 px on this row.
+        RECT er { 12, row2, w - 12, h };
+        drawLeftText(mem, er, wideFromUtf8(s.evalError), kErrText);
+    } else if (bits) {
+        std::string pv[4];
+        parityValues(pv);
+        const char* labels[4] = {
+            s.zh ? "置 1 位数" : "ones", s.zh ? "奇偶性" : "parity",
+            s.zh ? "偶校验位" : "even-bit", s.zh ? "奇校验位" : "odd-bit",
+        };
+        for (int i = 0; i < 4; ++i)
+            drawParityChip(mem, s.rcParity[i], wideFromUtf8(labels[i]), wideFromUtf8(pv[i]));
+    } else {
+        const std::string hint = s.mode == EditorSpec::Mode::Bytes
+            ? (s.zh ? "校验面板随 v0.3b 提供" : "Checksum panel arrives in v0.3b")
+            : s.mode == EditorSpec::Mode::Struct
+                ? (s.zh ? "结构体交互随 v0.3c 提供" : "Interactive struct viewer arrives in v0.3c")
+                : s.mode == EditorSpec::Mode::Settings
+                    ? (s.zh ? "左列改本次会话，右列为宿主设置快照（只读）" : "Left: this session. Right: read-only host settings")
+                    : (s.zh ? "校验术语见上方，状态栏 chip 可点击复制" : "See parity terms above; status chips are clickable");
+        RECT hr { 12, row2, w - 12, h };
+        drawLeftText(mem, hr, wideFromUtf8(hint), kLabelText);
+    }
 
     BitBlt(dc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
     SelectObject(mem, oldBmp);
@@ -1017,34 +1188,25 @@ void paint(HWND hwnd)
     EndPaint(hwnd, &ps);
 }
 
-void cycleWidth(HWND hwnd)
+// The settings tab reuses setType(), so a click there and a click on the
+// bit-grid toolbar always produce exactly the same state (including the
+// expression's type prefix rewrite).
+void handleSettingsContentClick(HWND hwnd, int x, int y)
 {
     EditorState& s = state();
-    setType(hwnd, s.width == 8 ? 16 : s.width == 16 ? 32 : s.width == 32 ? 64 : 8, s.isSigned);
-}
-
-void handleSettingsClick(HWND hwnd, int x, int y)
-{
-    EditorState& s = state();
-    const RECT rc = settingsRect();
-    if (!inRect(rc, x, y)) {
-        s.settingsOpen = false;
-        InvalidateRect(hwnd, nullptr, TRUE);
-        return;
-    }
-    const std::vector<SettingRow> rows = settingRows();
-    int rowY = rc.top + 34;
-    for (std::size_t i = 0; i < rows.size(); ++i, rowY += kOverlayRowH) {
-        if (y < rowY || y >= rowY + kOverlayRowH)
-            continue;
-        if (!rows[i].enabled)
+    static const int kWidths[4] = { 8, 16, 32, 64 };
+    for (int i = 0; i < 4; ++i) {
+        if (inRect(s.rcSetWidth[i], x, y)) {
+            setType(hwnd, kWidths[i], s.isSigned);
             return;
-        if (i == 0)
-            cycleWidth(hwnd);
-        else if (i == 1)
-            setType(hwnd, s.width, !s.isSigned);
-        InvalidateRect(hwnd, nullptr, TRUE);
-        return;
+        }
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (inRect(s.rcSetSign[i], x, y)) {
+            setType(hwnd, s.width, i == 1);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return;
+        }
     }
 }
 
@@ -1072,37 +1234,31 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const int x = static_cast<int>(LOWORD(lp));
         const int y = static_cast<int>(HIWORD(lp));
         SetFocus(hwnd); // keyboard returns to the shell unless the click hits a control
-        if (s.settingsOpen) {
-            handleSettingsClick(hwnd, x, y);
-            return 0;
-        }
-        if (s.helpOpen) {
-            s.helpOpen = false;
-            InvalidateRect(hwnd, nullptr, TRUE);
-            return 0;
-        }
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (inRect(s.rcTabs[i], x, y)) {
                 s.mode = static_cast<EditorSpec::Mode>(i);
                 s.focusBit = -1;
                 s.dragging = false;
+                s.hoverParity = -1;
                 relayout(hwnd);
                 return 0;
             }
         }
-        if (inRect(s.rcSet, x, y)) {
-            s.settingsOpen = !s.settingsOpen;
-            s.helpOpen = false;
-            InvalidateRect(hwnd, nullptr, TRUE);
+        if (s.mode == EditorSpec::Mode::Settings) {
+            handleSettingsContentClick(hwnd, x, y);
             return 0;
         }
-        if (inRect(s.rcHelp, x, y)) {
-            s.helpOpen = !s.helpOpen;
-            s.settingsOpen = false;
-            InvalidateRect(hwnd, nullptr, TRUE);
+        if (s.mode == EditorSpec::Mode::Help)
             return 0;
-        }
         if (s.mode == EditorSpec::Mode::Bits) {
+            std::string pv[4];
+            parityValues(pv);
+            for (int i = 0; i < 4; ++i) {
+                if (inRect(s.rcParity[i], x, y)) {
+                    copyParity(hwnd, i, pv[i]);
+                    return 0;
+                }
+            }
             static const int kWidths[4] = { 8, 16, 32, 64 };
             for (int i = 0; i < 4; ++i) {
                 if (inRect(s.rcWidthBtn[i], x, y)) {
@@ -1137,10 +1293,22 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_MOUSEMOVE: {
         EditorState& s = state();
+        const int x = static_cast<int>(LOWORD(lp));
+        const int y = static_cast<int>(HIWORD(lp));
         if (s.dragging) {
-            const int bit = hitBit(static_cast<int>(LOWORD(lp)), static_cast<int>(HIWORD(lp)));
+            const int bit = hitBit(x, y);
             if (bit >= 0)
                 setBit(s.value, s.width, bit, s.dragPaint);
+            InvalidateRect(hwnd, nullptr, TRUE);
+        }
+        int hover = -1;
+        if (s.mode == EditorSpec::Mode::Bits && s.evalError.empty()) {
+            for (int i = 0; i < 4; ++i)
+                if (inRect(s.rcParity[i], x, y))
+                    hover = i;
+        }
+        if (hover != s.hoverParity) {
+            s.hoverParity = hover;
             InvalidateRect(hwnd, nullptr, TRUE);
         }
         return 0;
@@ -1152,12 +1320,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         EditorState& s = state();
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         if (wp == VK_ESCAPE) {
-            if (s.settingsOpen || s.helpOpen) {
-                s.settingsOpen = s.helpOpen = false;
-                InvalidateRect(hwnd, nullptr, TRUE);
-            } else {
-                DestroyWindow(hwnd);
-            }
+            DestroyWindow(hwnd);
             return 0;
         }
         if (wp == VK_TAB) {
@@ -1216,9 +1379,13 @@ void threadMain(EditorSpec spec)
     s.endian = spec.endian;
     s.pack = spec.pack;
     s.zh = spec.zh;
+    s.hostWidth = spec.hostWidth;
+    s.hostEndian = spec.hostEndian;
+    s.hostPack = spec.hostPack;
+    s.hostBitsEnter = spec.hostBitsEnter;
     s.focusBit = -1;
     s.dragging = false;
-    s.settingsOpen = s.helpOpen = false;
+    s.hoverParity = -1;
     s.evalError.clear();
     s.msg.clear();
 

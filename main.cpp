@@ -218,6 +218,15 @@ winshun::Items bitsItems(const binlab::BitsEval& e, bool zh, bool editorOnEnter)
         {"signedType", e.signedType},
     });
     winshun::Items items;
+    // First row is a dedicated entry point. Its Enter opens the workbench;
+    // every base row below keeps Enter=copy so quick value retrieval stays a
+    // single keystroke away. `bitsEnter` still governs those rows.
+    items.push_back(makeRow("bits.open.workbench",
+                            tr(zh, "打开二进制工作台 · ", "Open binary workbench · ") + e.typeName + " " + r.hex,
+                            tr(zh, "Enter 打开 · 点位翻转、切换位宽、复制各进制",
+                               "Enter opens · toggle bits, switch width, copy bases"),
+                            r.hex, e.detail, e.chain, e.preview, "color:#0F766E", 101, zh, false, "bits",
+                            winshun::Json(), true, extra, true));
     items.push_back(makeRow("bits.result.hex", r.hex + tr(zh, " · 十六进制", " · HEX"), context,
                             r.hex, e.detail, e.chain, e.preview, icon, 100, zh, false, "bits",
                             winshun::Json(), editorOnEnter, extra, true));
@@ -476,6 +485,12 @@ struct BinaryLab : winshun::Plugin {
             spec.endian = st.defaultEndian;
             spec.pack = st.defaultPack;
             spec.zh = zh;
+            // Read-only snapshot for the settings tab. The SDK has no setter
+            // for host settings, so the window can only display them.
+            spec.hostWidth = st.defaultWidth;
+            spec.hostEndian = st.defaultEndian;
+            spec.hostPack = st.defaultPack;
+            spec.hostBitsEnter = st.editorOnEnter ? "editor" : "copy";
             std::string error;
             if (!binlab::openEditorWindow(spec, error)) {
                 winshun::debug("ra9fael.binarylab: editor window failed: " + error);
