@@ -30,6 +30,26 @@
   cell showed `1` with the focus border. (Clipboard write from inside the window
   still needs a real-host confirmation; the sandbox permits the native call but
   it was not exercised in the headless driver.)
+- **v0.3 GUI workbench — approved (2026-11-05).** raygui is shelved until every
+  feature passes real-user testing; the GDI path continues. Approved decisions,
+  from the user:
+  1. **One window, three tabs.** A shared shell — top bar (mode tabs, settings
+     dropdown, help panel), expression line, result row with per-base mouse
+     copy buttons, bottom status bar — with the content area switching between
+     bits / bytes / struct. All hint text moves into the help panel.
+  2. **Expression-driven bits.** The editor accepts a SpeedCrunch-compatible
+     expression; the bit grid operates on its evaluated result.
+  3. **Copy stays on Ctrl+C/B/D/O and gains mouse-clickable per-base buttons**
+     plus copy-all.
+  4. **bytes mode is editable**: click a byte to select it, edit its bits, the
+     stream and the decode panel update live; endianness from settings.
+  5. **struct mode edits member values**: click a member (ruler block or table
+     row), type a new value decoded per the member's type; layout/offsets stay
+     read-only.
+  Phases: v0.3a shell + bits, v0.3b bytes, v0.3c struct, v0.4 history/ans/
+  variables and settings persistence. Top-bar settings: width, signedness,
+  endianness, pack, `^` semantics; status bar = mode state | selection/focus |
+  transient feedback (copied ✓ green, `E_*` red, fades after ~2 s).
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise
