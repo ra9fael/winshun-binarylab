@@ -108,13 +108,18 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 | `bits`（`bitsEnter=editor`） | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
 | `bytes` / `struct` | `copyPrimary`（struct 摘要会展开成员） | `copyDetail` | `chainQuery` | — |
 
+例外：结果栏**第一行**是专用的工作台入口，无论 `bitsEnter` 设成什么，Enter 都是
+`openEditor`、Ctrl+Enter 是 `copyPrimary`。只输入 `bits `（关键字后一个空格）时，
+第一行同样是这个入口，直接 Enter 即可进入空白工作台。
+
 在 `struct` 摘要行按 Enter 会通过 `effects.replace` 展开成每个成员 / padding
 各一行，而不是复制。
 
 ### 交互式位编辑器
 
-从 `bits` 结果行触发（默认 Ctrl+Enter，`bitsEnter=editor` 时为 Enter）。窗口由插件
-自己持有，与插件其余部分一样运行在 strict sandbox 下。窗口内：
+从结果栏第一行按 Enter 触发；只输入 `bits ` 后按 Enter 也可以，此时表达式框留空、
+位宽取 `defaultWidth`。其余进制行按各自映射（默认 Ctrl+Enter，`bitsEnter=editor`
+时为 Enter）。窗口由插件自己持有，与插件其余部分一样运行在 strict sandbox 下。窗口内：
 
 | 输入 | 效果 |
 |---|---|
@@ -125,13 +130,14 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 | Ctrl+C / B / D / O | 以 HEX / BIN / DEC / OCT 复制值到剪贴板 |
 | Esc | 关闭 |
 
-编辑时标题栏实时显示四种进制。窗口运行在自己的 GUI 线程上；Win顺 关闭时通过
+编辑时结果 chips 实时显示四种进制。窗口运行在自己的 GUI 线程上；Win顺 关闭时通过
 插件析构函数销毁它。
 
 查询没有副作用：不删文件、不启动程序、不改剪贴板、不开窗口。复制和 `setQuery`
-效果只在用户触发动作时返回。只输入 `bits `、`bytes ` 或 `struct ` 而不带参数，
-会显示三行示例（`valid: false`，Tab 可填充示例）；解析失败会显示一行
-`valid: false`，带错误码和修正后的示例。
+效果只在用户触发动作时返回。`bits ` 不带参数时，第一行是**有效**的
+「打开二进制工作台」入口（`Enter` 打开空白工作台），下面保留三行示例
+（`valid: false`，Tab 可填充）；`bytes ` / `struct ` 不带参数仍只显示示例行。
+解析失败会显示一行 `valid: false`，带错误码和修正后的示例。
 
 ## 设置
 

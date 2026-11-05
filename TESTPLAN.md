@@ -127,6 +127,27 @@ approached.
 5. Add fuzz/property tests driven from outside the C++ test binary, and a
    real cancellation stress test with the GUI.
 
+## L4 — Empty keyword state (2026-11-06, measured)
+
+`tools/verify/workbench_drive.py` drives the real exe over JSON-RPC. New checks:
+
+| Check | Result |
+|---|---|
+| `query(command=bits, text="", raw="bits ")` first row is `bits.open.workbench.empty` | Pass |
+| First row is valid (no `valid: false`), `actions[0] = openEditor / Enter`, `data.expression = ""`, `data.width = 32` | Pass |
+| First row outranks the example rows by score | Pass |
+| `query(command="", text="", raw="bits ")` resolves the keyword from `raw` | Pass |
+| `openEditor` from that row leaves the EDIT control empty; client height 446 (default u32) | Pass |
+| Opening again from the ordinary `bits u32 0xA5 & 0x0F` row keeps its expression | Pass |
+| Full chain (chips, bit toggle, parity chips, toolbar, five tabs, error text, screenshots, exit 0) | Pass |
+| `cmake --build build` + `ctest --test-dir build` | Pass (139/139) |
+
+Host-side reading (not a host round trip): `WinShun/src/plugin/Catalog.cpp:346-365`
+matches a keyword followed by a space with `m.text = ""`; `Host.cpp:1437-1438`
+sends `text=""`, `raw="bits "`; `Launcher.cpp:5624` refuses actions on
+`valid: false` rows; `Items.cpp:159` clamps scores to 0..100 (101 becomes 100,
+still above the 90-point examples).
+
 ## Honest notes / corrections
 
 - The earlier design example said `bytes oct 377 040 000 -> FF 40 00`. That

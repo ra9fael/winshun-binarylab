@@ -107,6 +107,19 @@
   setter. `workbench_drive.py` was rebuilt (the old `build/verify` was wiped)
   and now covers parity-chip copies, all five tabs, direct tab-to-tab
   switching, settings-tab buttons, the full error string and five screenshots.
+- **v0.3a4 — implemented (2026-11-06).** Empty keyword state: `bits ` with no
+  words reaches `query()` as `command=bits, text=""`. It used to answer with
+  only `invalid()` example rows, which the host refuses to action
+  (`Launcher::performPlugin` returns on `!p.valid`), so Enter was a no-op.
+  Answer with a valid first row (`bits.open.workbench.empty`, `Enter` =
+  `openEditor`, score above the examples) that opens a blank workbench at the
+  host's default width; examples follow as before. `EditorSpec.blankExpression`
+  suppresses the usual `0x0` seed, so clicking a bit is not later undone by a
+  stale evaluation. `openEditor` accepts an explicit empty `data.expression`
+  and strips a leading command keyword from `text`. `bytes ` / `struct ` keep
+  the example-only behaviour until their interactive tabs are built. The drive
+  harness covers both query paths, the blank EDIT text and the ordinary
+  expression entry.
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise

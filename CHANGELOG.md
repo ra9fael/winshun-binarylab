@@ -30,6 +30,13 @@ never published; they are listed below for context.
 - A two-row status bar: four labelled clickable parity chips (ones, parity,
   even-bit, odd-bit) with hover definitions, and full untruncated parse
   errors.
+- Typing `bits ` (keyword plus a space, no expression) returns a valid first
+  row whose Enter opens the workbench with a blank expression at the default
+  width. The three example rows remain below it as autocomplete suggestions.
+  `bytes ` / `struct ` keep the example-only behaviour for now.
+- A grey hint is painted inside the empty expression input. The native
+  `EM_SETCUEBANNER` is ignored without visual styles, so the subclassed EDIT
+  draws it on `WM_PAINT`.
 
 ### Changed
 - Plugin id is now `ra9fael.binarylab` (was `renfei.binarylab`) and the author
@@ -38,9 +45,16 @@ never published; they are listed below for context.
 - Settings and Help replace the content area instead of covering it, so a tab
   click is never swallowed by an open panel.
 - Host settings in the Settings tab are read-only: the SDK provides no setter.
+- The `bits` command hint in `plugin.json` mentions that Enter opens the
+  workbench.
 
 ### Fixed
 - The BIN and DEC copy chips copied each other's value.
+- The empty-keyword state returned only `valid: false` example rows; the host
+  refuses actions on invalid rows, so Enter did nothing.
+- `openEditor` now honours an explicit empty `data.expression` instead of
+  falling back to the row's copy value, and tolerates `text` that still
+  includes the command keyword.
 
 ### Known limitations
 - The bytes and struct tabs of the workbench are placeholders; use the `bytes`

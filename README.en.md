@@ -121,12 +121,19 @@ host's action menu. The split is chosen by the `bitsEnter` setting.
 | `bits` (`bitsEnter=editor`) | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
 | `bytes` / `struct` | `copyPrimary` (struct summary expands members) | `copyDetail` | `chainQuery` | — |
 
+Exception: the **first result row** is a dedicated workbench entry. Regardless
+of `bitsEnter`, its Enter is `openEditor` and Ctrl+Enter is `copyPrimary`.
+Typing just `bits ` (keyword plus a space) produces the same first row, so
+Enter opens a blank workbench immediately.
+
 On a `struct` summary row Enter expands into one row per member/padding via
 `effects.replace` instead of copying.
 
 ### Interactive bit editor
 
-Triggered from a `bits` result row (Ctrl+Enter by default, or Enter when
+Triggered with Enter on the first result row; typing just `bits ` and pressing
+Enter works too and opens a blank expression box at `defaultWidth`. The other
+base rows follow their own mapping (Ctrl+Enter by default, or Enter when
 `bitsEnter=editor`). The window is owned by the plugin and runs under the same
 strict sandbox as the rest of the plugin. Inside it:
 
@@ -139,15 +146,16 @@ strict sandbox as the rest of the plugin. Inside it:
 | Ctrl+C / B / D / O | Copy the value as HEX / BIN / DEC / OCT to the clipboard |
 | Esc | Close |
 
-The header shows the four bases live as you edit. The window lives on its own GUI
-thread; WinShun tears it down through the plugin destructor on shutdown.
+The result chips show the four bases live as you edit. The window lives on its
+own GUI thread; WinShun tears it down through the plugin destructor on shutdown.
 
 Queries have no side effects: they never delete files, start programs, change
 the clipboard, or open a window. Copy and `setQuery` effects are returned only
-when the user triggers an action. Typing `bits `, `bytes ` or `struct ` with no
-arguments shows three example rows (`valid: false`, Tab fills the example), and
-a parse failure shows one `valid: false` row with an error code and a corrected
-example.
+when the user triggers an action. With `bits ` and no arguments, the first row
+is a **valid** "Open binary workbench" entry (Enter opens a blank workbench),
+followed by three example rows (`valid: false`, Tab fills the example).
+`bytes ` / `struct ` with no arguments still show only the examples. A parse
+failure shows one `valid: false` row with an error code and a corrected example.
 
 ## Settings
 
