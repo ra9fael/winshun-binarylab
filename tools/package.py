@@ -44,7 +44,11 @@ def tracked_files() -> list[str]:
     out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, check=True,
                          capture_output=True).stdout.decode("utf-8")
     names = [n for n in out.split("\0") if n]
-    return [n for n in names if not any(part.startswith(".") for part in n.split("/"))]
+    # tools/verify/ holds Windows-only dev harnesses; they are not part of
+    # the shipped plugin.
+    return [n for n in names
+            if not any(part.startswith(".") for part in n.split("/"))
+            and not n.startswith("tools/verify/")]
 
 
 def main() -> int:
