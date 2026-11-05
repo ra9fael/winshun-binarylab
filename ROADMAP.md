@@ -50,6 +50,47 @@
   variables and settings persistence. Top-bar settings: width, signedness,
   endianness, pack, `^` semantics; status bar = mode state | selection/focus |
   transient feedback (copied ✓ green, `E_*` red, fades after ~2 s).
+- **v0.3a workbench shell — implemented (2026-11-05).** The unified shell is
+  live: three tabs (bits interactive, bytes/struct placeholders), a native
+  EDIT expression line re-evaluated through `evalBits()` on every change, the
+  result row as mouse-clickable HEX/OCT/BIN/DEC/copy-all chips, the three-part
+  status bar, and a settings dropdown (width/signedness active; endianness/
+  pack/`^` shown disabled until v0.3b/c). Verified by `workbench_drive.py`
+  over raw JSON-RPC: live re-evaluation, the **first successful clipboard
+  write from inside the sandboxed window** (HEX chip -> `0x000000F0`), bit
+  toggle, width 32->64 window resize, tab switch and back, clean exit 0.
+- **v0.3a2 — approved (2026-11-05).** User decisions, all with the recommended
+  option: (1) the bit grid keeps 8 columns and widens its cells to fill the
+  client width (~40 -> ~70 px at 616 px, byte-group gap every 8 bits);
+  (2) a persistent width/signedness toolbar sits directly above the grid —
+  segmented `8|16|32|64` buttons plus `u/i`, one click resizes the window,
+  synced with the settings panel, and an explicit type prefix in the
+  expression still overrides it temporarily; the engine already supports any
+  width 1..64, the presets are UI only, and 64 bits is the cap (the evaluator
+  is `uint64_t`-based; wider needs a bigint rewrite that embedded-register
+  work does not justify); (3) CRC support ships as the common preset set
+  computed in one shot - CRC-8(0x07), CRC-16/ARC, CRC-16/MODBUS,
+  CRC-16/CCITT-FALSE, CRC-16/XMODEM, CRC-32 - plus even/odd parity with the
+  popcount and an additive checksum, all table-driven from one generic
+  parameterised kernel and tested against the `"123456789"` standard vectors.
+  Surfaces: text commands `crc` (all presets at once, or one via
+  `crc crc16m ...`) and `parity <expr>`; a live parity indicator in the bits
+  status bar; a checksum panel in the bytes workbench (range = whole stream
+  or the selected byte range, each algorithm row individually copyable).
+  Order: v0.3a2 grid fill + width toolbar + parity indicator, v0.3b bytes
+  mode + checksum panel + `crc`/`parity` commands, v0.3c struct mode, v0.4
+  history/ans/variables + persistence.
+- **v0.3a2 grid fill + width toolbar + parity — implemented (2026-11-05).**
+  Adaptive `cellW = (clientW - 2*16 - 8 + 4) / 8` (72 px at 616, 55 px at
+  480) with an 8 px nibble gap. Toolbar `8|16|32|64` + `unsigned u|signed i`
+  above the grid; a type change keeps the bit pattern (truncate, or
+  sign-extend when the old type was signed) and rewrites a leading type
+  prefix in the expression so re-evaluation agrees with the click; the
+  settings panel goes through the same `setType` path. The status bar shows
+  popcount and the even-parity bit. Fixed a chip mapping bug (BIN and DEC
+  chips copied each other). `workbench_drive.py` covers toolbar 8 (shrink,
+  truncate), i8 DEC `-15`, i64 sign extension `0xFFFFFFFFFFFFFFF1`, prefix
+  rewrite `u32 -> u16`, and settings cycle sync.
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise
