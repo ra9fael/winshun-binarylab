@@ -17,6 +17,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -26,12 +27,16 @@ OUT = ROOT / "build" / "verify"
 OUT.mkdir(parents=True, exist_ok=True)
 EXE = str(ROOT / "binarylab.exe")
 SHOT = str(ROOT / "tools" / "verify" / "spike_shot.py")
+DATA_DIR = tempfile.mkdtemp(prefix="binarylab-hist-")
+HIST_FILE = Path(DATA_DIR) / "history.jsonl"
 PNG_BITS = str(OUT / "workbench_bits.png")
 PNG_PANEL = str(OUT / "workbench_settings.png")
 PNG_HELP = str(OUT / "workbench_help.png")
 PNG_ERR = str(OUT / "workbench_error.png")
 PNG_HOVER = str(OUT / "workbench_hover.png")
 PNG_BLANK = str(OUT / "workbench_blank.png")
+PNG_HISTORY = str(OUT / "workbench_history.png")
+PNG_FLOAT = str(OUT / "workbench_float.png")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -80,6 +85,21 @@ def post_click(hwnd, x, y):
 def post_move(hwnd, x, y):
     lp = (int(y) << 16) | (int(x) & 0xFFFF)
     user32.PostMessageW(hwnd, 0x0200, 0, lp)  # WM_MOUSEMOVE
+
+
+WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
+VK_RETURN, VK_UP, VK_DOWN = 0x0D, 0x26, 0x28
+
+
+def post_key(hwnd, vk):
+    user32.PostMessageW(hwnd, WM_KEYDOWN, vk, 0)
+    user32.PostMessageW(hwnd, WM_KEYUP, vk, 0)
+
+
+def edit_text(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    user32.SendMessageW(hwnd, 0x000D, 512, buf)  # WM_GETTEXT
+    return buf.value
 
 
 def shoot(path):
@@ -158,7 +178,7 @@ def recv(rid):
 WM_SETTEXT, WM_GETTEXT = 0x000C, 0x000D
 
 send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-      "params": {"protocolVersion": "1", "winshun": "0.7.0", "pluginDir": ".", "dataDir": ".",
+      "params": {"protocolVersion": "1", "winshun": "0.7.0", "pluginDir": ".", "dataDir": DATA_DIR,
                  "locale": "zh", "theme": "dark", "settings": {}}})
 recv(1)
 # ---- 0: `bits ` with no words must offer a REAL, actionable first row ----
@@ -341,6 +361,101 @@ assert len(err) > 40 and ": " in err and "…" not in err, f"error text was trim
 assert shoot(PNG_ERR)
 user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0x1234")
 time.sleep(0.5)
+
+# ---- 7b: Enter submits and records CONFIRMED history only ------------------
+def hist_lines():
+    return [l for l in stderr_lines if "history append expr=" in l]
+
+
+assert not HIST_FILE.exists(), "live EN_CHANGE evaluation must not write history"
+for expr in ("u32 0x1234", "4M", "4Mi"):
+    user32.SendMessageW(edit, WM_SETTEXT, 0, expr)
+    time.sleep(0.35)
+    before = len(hist_lines())
+    post_key(edit, VK_RETURN)
+    time.sleep(0.35)
+    assert len(hist_lines()) > before, f"Enter must submit {expr!r}"
+print("history file:", HIST_FILE, HIST_FILE.exists())
+assert HIST_FILE.exists(), "history must persist in the host dataDir"
+lines = HIST_FILE.read_text(encoding="utf-8").splitlines()
+assert len(lines) == 3, f"expected 3 confirmed expressions, got {len(lines)}"
+assert '"expr":"4Mi"' in lines[-1], "JSONL stores the expression verbatim"
+last_layout = [l for l in stderr_lines if "layout:" in l][-1]
+assert "histPersist=1" in last_layout, "dataDir is writable, not session-only"
+
+before = len(hist_lines())
+post_key(edit, VK_RETURN)  # same expression again -> adjacent duplicate
+time.sleep(0.35)
+assert len(hist_lines()) == before, "resubmitting the same expression is a no-op"
+assert len(HIST_FILE.read_text(encoding="utf-8").splitlines()) == 3
+
+# ---- 7c: Up/Down browse history; Down past the newest restores the draft ----
+user32.SendMessageW(edit, WM_SETTEXT, 0, "1")
+time.sleep(0.3)
+post_key(edit, VK_UP)
+time.sleep(0.3)
+assert edit_text(edit) == "4Mi", f"Up -> newest, got {edit_text(edit)!r}"
+post_key(edit, VK_UP)
+time.sleep(0.3)
+assert edit_text(edit) == "4M", "Up -> older"
+post_key(edit, VK_DOWN)
+time.sleep(0.3)
+assert edit_text(edit) == "4Mi", "Down -> newer"
+post_key(edit, VK_DOWN)
+time.sleep(0.3)
+assert edit_text(edit) == "1", "Down past the newest restores the typed draft"
+
+# ---- 7d: the dropdown button opens and a click recalls an expression ----
+user32.SendMessageW(edit, WM_SETTEXT, 0, "0x1")
+time.sleep(0.3)
+click_rect(lay, "histBtn")
+time.sleep(0.5)
+assert shoot(PNG_HISTORY)
+hl, ht, hw_, hh = rect(lay, "hist0")
+n_hist_clicks = len([l for l in stderr_lines if "histClick" in l])
+post_click(hwnd, hl + 60, ht + hh // 2)
+time.sleep(0.5)
+assert len([l for l in stderr_lines if "histClick" in l]) > n_hist_clicks, \
+    "the dropdown click must reach the window"
+assert edit_text(edit) == "4Mi", f"dropdown recall, got {edit_text(edit)!r}"
+
+# ---- 7e: unit suffixes (SI 1000 vs IEC 1024) -------------------------------
+for expr, want in (("4M", "0x003D0900"), ("4Mi", "0x00400000"), ("4MB", "0x003D0900")):
+    user32.SendMessageW(edit, WM_SETTEXT, 0, expr)
+    time.sleep(0.4)
+    got = copy_chip(lay, 0)
+    print("unit", expr, "->", got)
+    assert got == want, f"{expr}: expected {want}, got {got!r}"
+
+# ---- 7f: IEEE-754 bit patterns and the FLOAT chip ---------------------------
+n = n_layouts()
+user32.SendMessageW(edit, WM_SETTEXT, 0, "f64 1.5")
+time.sleep(0.6)
+lay_f = layout(n)  # u32 -> f64 widens the window
+assert int(lay_f["float"]) == 1, "float mode active"
+assert copy_chip(lay_f, 0) == "0x3FF8000000000000", "f64 1.5 bit pattern"
+assert copy_chip(lay_f, 3) == "1.5", "FLOAT chip copies the decoded text"
+assert shoot(PNG_FLOAT)
+user32.SendMessageW(edit, WM_SETTEXT, 0, "1u")
+time.sleep(0.5)
+assert copy_chip(lay_f, 0) == "0x3EB0C6F7A0B5ED8D", "1u = micro = 1e-6"
+
+# ---- 7g: settings tab clears history ---------------------------------------
+n = n_layouts()
+click_rect(lay, "tab3")
+time.sleep(0.4)
+lay_clear = layout(n)
+click_rect(lay_clear, "clearHist")
+time.sleep(0.4)
+assert any("history cleared" in l for l in stderr_lines), "clear-history button"
+assert HIST_FILE.read_text(encoding="utf-8") == "", "history file truncated"
+n = n_layouts()
+click_rect(lay, "tab0")
+time.sleep(0.4)
+layout(n)
+
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
+time.sleep(2.3)  # let the clear-history message fade before the final shot
 
 # ---- 8: final screenshot and clean shutdown ----
 assert shoot(PNG_BITS)
