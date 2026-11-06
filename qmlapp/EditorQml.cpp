@@ -18,9 +18,13 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QStyleHints>
+#include <QSurfaceFormat>
 #include <QThread>
 
 #include "WindowFrame.h"
+#include "SystemTheme.h"
+#include "platform/WindowEffects.h"
 
 #include <algorithm>
 #include <atomic>
@@ -77,6 +81,25 @@ bool guiOpen(const EditorSpec& spec, std::string& error)
         return false;
     }
     g_frame->setWindow(window);
+    // The DWM frame and the Mica backdrop, as capture's prepareWindow gives
+    // them to every frameless WinShun QML window: an alpha-buffered swapchain
+    // (without an alpha channel the window's transparent colour renders as
+    // opaque black — the workbench read as a black window on light tokens),
+    // the native frame with Mica behind the content, and the dark title
+    // frame. Applied with the window created but not shown, as there.
+    const bool backdrop = ws::SystemTheme::backdropAvailable();
+    if (backdrop) {
+        QSurfaceFormat format = window->requestedFormat();
+        if (format.alphaBufferSize() < 8) {
+            format.setAlphaBufferSize(8);
+            window->setFormat(format);
+        }
+    }
+    window->create();
+    ws::win::styleFramelessWindow(window, backdrop);
+    ws::win::setDarkFrame(window,
+        QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    ws::win::keepDarkFrameOnShow(window);
     g_window = window;
     QObject::connect(window, &QQuickWindow::destroyed, [] { g_visible = false; });
     g_visible = true;

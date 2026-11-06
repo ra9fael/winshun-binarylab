@@ -107,7 +107,9 @@ Item {
                         required property int index
                         // MSB left: cell 0 holds the width-1th bit.
                         readonly property int bit: page.lab.width - 1 - index
-                        readonly property bool on: page.lab.bitAt(bit) === 1
+                        // The list property, not bitAt(): a binding over an
+                        // invokable never re-evaluates when the value changes.
+                        readonly property bool on: page.lab.bitValues[bit] === 1
 
                         width: grid.cellWidth
                         height: grid.cellHeight

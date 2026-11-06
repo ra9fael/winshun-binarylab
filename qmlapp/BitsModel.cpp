@@ -146,6 +146,15 @@ int BitsModel::bitAt(int index) const
     return static_cast<int>((m_value >> index) & 1);
 }
 
+QVariantList BitsModel::bitValues() const
+{
+    QVariantList bits;
+    bits.reserve(64);
+    for (int i = 0; i < m_width; ++i)
+        bits.push_back(static_cast<int>((m_value >> i) & 1));
+    return bits;
+}
+
 void BitsModel::toggleBit(int index)
 {
     if (index < 0 || index >= m_width)

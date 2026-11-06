@@ -24,6 +24,10 @@ class BitsModel : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString expression READ expression WRITE setExpression NOTIFY stateChanged)
     Q_PROPERTY(int width READ width NOTIFY stateChanged)
+    // The grid's cells bind to this list, not to a bitAt() call: a QML
+    // binding over an invokable records no dependency, so a flipped bit
+    // would never repaint (the value changed, the cell did not).
+    Q_PROPERTY(QVariantList bitValues READ bitValues NOTIFY stateChanged)
     Q_PROPERTY(bool signedType READ signedType NOTIFY stateChanged)
     Q_PROPERTY(QString typeName READ typeName NOTIFY stateChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY stateChanged)
@@ -51,6 +55,7 @@ public:
     QString expression() const { return m_expression; }
     void setExpression(const QString& text);
     int width() const { return m_width; }
+    QVariantList bitValues() const;
     bool signedType() const { return m_signed; }
     QString typeName() const { return m_typeName; }
     QString errorText() const { return m_error; }
