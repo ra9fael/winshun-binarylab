@@ -525,24 +525,35 @@ for expr, want in (("u8 1 + 2 * 3", "0x07"),
     assert got == want, f"{expr}: expected {want}, got {got!r}"
 
 # ---- 7i: session eval mode switch (fixed <-> C) ------------------------------
-ml, mt, mw_, mh = rect(lay, "setmode1")
+# The mode buttons only have geometry on the settings tab; setmode1 is "C" and
+# "fixed" sits one 56 px segment to its left.
+def goto_tab(idx):
+    n_ = n_layouts()
+    click_rect(lay, f"tab{idx}")
+    time.sleep(0.5)
+    return layout(n_)
+
+
+lay_s = goto_tab(3)
+ml, mt, mw_, mh = rect(lay_s, "setmode1")
+assert mw_ > 0, "settings tab must report the mode buttons"
 n_mode_clicks = len([l for l in stderr_lines if "setEvalMode" in l])
-post_click(hwnd, ml - 56 + mw_ // 2, mt + mh // 2)  # the "C" segment
+post_click(hwnd, ml + mw_ // 2, mt + mh // 2)  # the "C" segment
 time.sleep(0.5)
-assert len([l for l in stderr_lines if "setEvalMode" in l]) > n_mode_clicks, "C-mode click"
-lay_c = layout(n_layouts())
-assert lay_c["cmode"] == "1", "settings panel must report cmode=1"
+assert len([l for l in stderr_lines if "setEvalMode c" in l]) > 0, "C-mode click"
+lay_c = goto_tab(0)
+assert lay_c["cmode"] == "1", "bits page must report cmode=1"
 user32.SendMessageW(edit, WM_SETTEXT, 0, "200 + 100")  # no prefix -> C promotions
 time.sleep(0.4)
 assert copy_chip(lay_c, 0) == "0x0000012C", "C mode: i32 promotion"
 user32.SendMessageW(edit, WM_SETTEXT, 0, "u8 200 + 100")  # prefix wins -> fixed wrap
 time.sleep(0.4)
-assert copy_chip(lay_c, 0) == "0x2C", "explicit type prefix still evaluates fixed"
-n = n_layouts()
-post_click(hwnd, ml + mw_ // 2, mt + mh // 2)  # back to "fixed"
+assert copy_chip(layout(0), 0) == "0x2C", "explicit type prefix still evaluates fixed"
+goto_tab(3)
+post_click(hwnd, ml - 56 + mw_ // 2, mt + mh // 2)  # back to "fixed"
 time.sleep(0.5)
 assert any("setEvalMode fixed" in l for l in stderr_lines), "fixed-mode click"
-assert layout(n)["cmode"] == "0", "settings panel must report cmode=0"
+assert goto_tab(0)["cmode"] == "0", "bits page must report cmode=0"
 
 user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
 time.sleep(0.5)
