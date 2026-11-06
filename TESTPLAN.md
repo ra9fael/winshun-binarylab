@@ -222,9 +222,14 @@ caveat as L4).
   clickable segment while the row stays; toggling off restores the height.
   Screenshots `workbench_floatbar.png` (E hovered) and
   `workbench_floatbar_ghost.png`.
-- **Status of 7j: written, not yet measured** (same desktop constraint as
-  7h/7i). The build is green and the logic is covered; the GUI run and a
-  look at the captions (ellipsis on the 456 px row) are still owed.
+- **Measured 2026-11-06: 7h, 7i and 7j pass on an idle desktop**, full drive
+  `ALL CHECKS PASSED`, exit code 0. The first run failed in 7i because the
+  script read `setmode1` from the bits-page layout, where the settings
+  buttons have no geometry (`0,0,0,0`); 7i now switches to the settings tab
+  before clicking and back to bits before copying. Screenshots checked by
+  eye: the hovered E caption fits the row, E bits 30..23 are tinted in the
+  grid, and the ghost bar is visibly dimmed with the "not the current
+  result" caption.
 
 ## Honest notes / corrections
 
