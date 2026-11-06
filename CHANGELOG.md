@@ -35,7 +35,18 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   get a dimmed ghost reading, 8 bits a grey band. New `floatBar` setting
   (`off` / `on`) picks the initial state.
 
+- Float on the workbench toolbar: the sign row becomes a type row
+  `unsigned u | signed i | float f`; in float mode the width buttons read
+  `f16 / f32 / f64` (8 disabled). Containers switch by re-encoding the value,
+  integer <-> float switches keep the bits.
+
 ### Changed
+- **Behaviour change:** a plain decimal under a float prefix is encoded as a
+  value: `f32 88` = `0x42B00000` (was the raw pattern `0x58`), `f16 65504`
+  = `0x7BFF` (was `0xFFE0`). Raw patterns use `0x`/`0b`/`0o` or `@`.
+  Operands of bit operations are unchanged.
+- A long status-bar message takes the width it measures instead of being
+  clipped at its left edge.
 - Unimplemented float spellings (`f128`, `bf16`, `f8`, ...) now fail with
   `E_FLOAT_TYPE` naming `f16 / f32 / f64` instead of "invalid digit".
 - Bare negative literals now wrap to the type instead of erroring

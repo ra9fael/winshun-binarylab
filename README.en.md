@@ -211,6 +211,20 @@ f16/f32/f64" bar; 8 bits has no container and shows a grey band with a hint.
 The window grows by 34 px only when the pill is switched, never because of the
 result type. The `floatBar` setting picks the initial state.
 
+**Float on the toolbar**: the "Type" row next to the widths reads
+`unsigned u | signed i | float f`. In float mode the width buttons read
+`f16 / f32 / f64` and 8 is disabled (no container). Switching containers
+re-encodes the **value** (`f32 1.5` → `f64 1.5`, rounding or range loss in the
+detail); switching between integer and float keeps the **bits** and changes the
+reading (`u32 0x3FC00000` ⇄ `f32 0x3FC00000`, the float bar's ghost reading).
+A signed reading is written `i32 @0x…`, because a hex literal with the top bit
+set is out of signed range and `@` marks raw bits.
+
+**A plain decimal under a float prefix is a value**: `f32 88` = 88.0 =
+`0x42B00000`, `f16 65504` = `0x7BFF`. Write raw patterns as `0x…` / `0b…` /
+`0o…` or `@88`. Operands of a bit operation are unchanged
+(`f32 0x3FC00000 | 1` still ORs the pattern).
+
 There is no float arithmetic: a float **literal** must stand alone
 (`1.5 & 0xFF` gives `E_FLOAT_OP`, `u32 1.5` gives `E_FLOAT_TYPE`). To apply bit
 operations to an encoded pattern, write the raw bits, e.g.

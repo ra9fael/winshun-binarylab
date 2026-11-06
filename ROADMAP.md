@@ -175,6 +175,12 @@
   click-to-copy per field, `floatBar` setting for the initial state.
   Verification: 259/259 logic assertions; drive section 7j written, GUI run
   pending with 7h/7i.
+- **v0.3a8 — implemented (2026-11-06).** From "浮点模式为什么只能用
+  f16/f32/f64前缀切换？？": the sign row became a type row with `float f`,
+  width buttons name the containers in float mode, containers re-encode the
+  value, integer <-> float keeps the bits. A plain decimal under a float
+  prefix is now a value (`f32 88` = 88.0); raw patterns need a base prefix or
+  `@`. Status-bar messages are no longer clipped.
 - **v0.3b (CRC kernel + bytes workbench + `crc`/`parity` commands) remains
   deferred.** This round and v0.3a3/a4 took priority because they were
   reported by the user while using the workbench.

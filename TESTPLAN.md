@@ -231,6 +231,19 @@ caveat as L4).
   grid, and the ghost bar is visibly dimmed with the "not the current
   result" caption.
 
+## L9 — Float on the toolbar and decimal values (2026-11-06, measured)
+
+- `tests/test_logic.cpp`: **270/270**. New: `f32 88` → 0x42B00000,
+  `f16 65504` → 0x7BFF, `f64 1`, `f32 -2`, `f16 0`, `f32 4K` → 4000.0,
+  `f32 @88` and `f32 0b1011000` stay raw 0x58, `f16 65536` reports +Inf,
+  `u32 88` untouched, `f32 0x3FC00000 | 1` still ORs the pattern.
+- Drive section 7k, measured `ALL CHECKS PASSED`, exit 0: `f32 88` chips
+  `0x42B00000` / `88`; width f64 rewrites to `f64 88` (`0x4056000000000000`);
+  f16 gives `0x5580`; the disabled 8 leaves the expression alone; `kind0`
+  gives `u16 0x5580` with DEC 21888; `f32 -1.5` → `sgn1` gives
+  `i32 @0xBFC00000` with DEC -1077936128; `kind2` gives `f32 0xBFC00000` and
+  FLOAT -1.5. Screenshot `workbench_float_toolbar.png` checked by eye.
+
 ## Honest notes / corrections
 
 - The earlier design example said `bytes oct 377 040 000 -> FF 40 00`. That
