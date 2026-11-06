@@ -41,6 +41,7 @@ PNG_HISTORY = str(OUT / "workbench_history.png")
 PNG_FLOAT = str(OUT / "workbench_float.png")
 PNG_FLOATBAR = str(OUT / "workbench_floatbar.png")
 PNG_GHOST = str(OUT / "workbench_floatbar_ghost.png")
+PNG_KIND = str(OUT / "workbench_float_toolbar.png")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -631,6 +632,64 @@ time.sleep(0.5)
 lay_off = layout(n)
 assert lay_off["floatbar"] == "0" and int(lay_off["clientH"]) == h_off, "toggle off shrinks back"
 time.sleep(2.3)  # let the clear-history message fade before the final shot
+
+# ---- 7k: float on the toolbar -------------------------------------------------
+# The window only relays out when the width changes, so each step reads the
+# newest layout line instead of waiting for a new one; the float flag comes
+# from the paint-time log line that every relayout or evaluation emits.
+def newest():
+    return layout(0)
+
+
+
+def expr_after(click_key, d):
+    click_rect(d, click_key)
+    time.sleep(0.6)
+    return edit_text(edit), newest()
+
+
+def click_width(d, idx):
+    l_, t_, w_, h_ = rect(d, "w8")
+    post_click(hwnd, l_ + idx * w_ + w_ // 2, t_ + h_ // 2)
+    time.sleep(0.6)
+    return edit_text(edit), newest()
+
+
+# f32 88 is now a value: 88.0 = 0x42B00000
+user32.SendMessageW(edit, WM_SETTEXT, 0, "f32 88")
+time.sleep(0.6)
+lay_k = newest()
+assert copy_chip(lay_k, 0) == "0x42B00000", "f32 88 encodes 88.0"
+assert copy_chip(lay_k, 3) == "88", "FLOAT chip shows 88"
+# container switch re-encodes the value
+txt, lay_k = click_width(lay_k, 3)      # f64
+print("f32 -> f64:", txt)
+assert txt == "f64 88", f"container switch rewrites the prefix, got {txt!r}"
+assert copy_chip(lay_k, 0) == "0x4056000000000000", "f64 88.0"
+txt, lay_k = click_width(lay_k, 1)      # f16
+assert txt == "f16 88" and copy_chip(lay_k, 0) == "0x5580", "f16 88.0"
+# the 8 button has no container: nothing changes
+txt, lay_k = click_width(lay_k, 0)
+assert txt == "f16 88", "8 is disabled in float mode"
+# float -> unsigned keeps the bits
+txt, lay_k = expr_after("kind0", lay_k)
+print("f16 -> u16:", txt)
+assert txt == "u16 0x5580", f"float -> u keeps the bits, got {txt!r}"
+assert copy_chip(lay_k, 3) == "21888", "DEC chip is back: 0x5580 as u16"
+# signed reading of a pattern with the top bit set
+user32.SendMessageW(edit, WM_SETTEXT, 0, "f32 -1.5")
+time.sleep(0.6)
+lay_k = newest()
+txt, lay_k = expr_after("sgn1", lay_k)
+assert txt == "i32 @0xBFC00000", f"float -> i keeps the bits, got {txt!r}"
+assert copy_chip(lay_k, 3) == "-1077936128", "signed reading of 0xBFC00000"
+# integer -> float keeps the bits
+txt, lay_k = expr_after("kind2", lay_k)
+assert txt == "f32 0xBFC00000", f"i -> f keeps the bits, got {txt!r}"
+assert copy_chip(lay_k, 3) == "-1.5", "the same bits read back as -1.5"
+assert shoot(PNG_KIND)
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
+time.sleep(2.3)
 
 # ---- 8: final screenshot and clean shutdown ----
 assert shoot(PNG_BITS)
