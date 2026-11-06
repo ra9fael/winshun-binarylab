@@ -5,9 +5,10 @@
 // Threading (the mirror of the Win32 workbench's): the Qt event loop and the
 // window live on the GUI thread (winshunBinaryLabMain's), serve() runs on a
 // worker thread, and these calls marshal over with
-// Qt::BlockingQueuedConnection. GUI-side state needs no lock; the workbench
-// prototype is the bits page only — a bytes/struct spec answers with an
-// error instead of a window.
+// Qt::BlockingQueuedConnection. GUI-side state needs no lock; every mode
+// opens the five-tab shell (qmlapp/qml/Workbench.qml), where the bytes and
+// struct pages are still placeholders (the Win32 workbench's features arrive
+// slice by slice).
 //
 // This file must not write to stdout; report problems through `error` and
 // winshun::debug (stderr).

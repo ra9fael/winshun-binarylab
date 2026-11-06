@@ -4,11 +4,11 @@
 // openEditorWindow/editorVisible/closeEditorAndWait marshal over from the
 // serve() thread. One QQmlEngine lives for the process (the shared WinShun
 // controls and QtQuick come from Win顺's qml\ folder); each open makes a
-// window from BitsWindow.qml with a fresh BitsModel.
+// Workbench window with a fresh WorkbenchModel (which owns the pages' models).
 
 #include "editor.h"
 
-#include "BitsModel.h"
+#include "WorkbenchModel.h"
 #include "../winshun.h"
 
 #include <QCoreApplication>
@@ -52,28 +52,18 @@ QQmlEngine* ensureEngine()
     return g_engine;
 }
 
-QString tr(bool zh, const char* chinese, const char* english)
-{
-    return zh ? QString::fromUtf8(chinese) : QString::fromUtf8(english);
-}
-
 // The GUI-thread half of openEditorWindow.
 bool guiOpen(const EditorSpec& spec, std::string& error)
 {
     error.clear();
-    if (spec.mode != EditorSpec::Mode::Bits) {
-        error = tr(spec.zh, "QML 工作台原型只实现了 bits 页", "The QML workbench prototype only has the bits page")
-                    .toStdString();
-        return false;
-    }
     QQmlEngine* engine = ensureEngine();
-    auto* model = new BitsModel(spec, engine);
+    auto* model = new WorkbenchModel(spec, engine);
     winshun::debug("ra9fael.binarylab: import paths: " + engine->importPathList().join(';').toStdString());
-    QQmlComponent component(engine, u"WinShun"_s, u"BitsWindow"_s);
+    QQmlComponent component(engine, u"WinShun"_s, u"Workbench"_s);
     if (component.isError()) { // the embedded module's qmldir by URL instead
         winshun::debug("ra9fael.binarylab: by-type load failed (" + component.errorString().toStdString()
             + "), trying the qrc URL");
-        component.loadUrl(QUrl(u"qrc:/qt/qml/WinShun/BitsWindow.qml"_s), QQmlComponent::PreferSynchronous);
+        component.loadUrl(QUrl(u"qrc:/qt/qml/WinShun/Workbench.qml"_s), QQmlComponent::PreferSynchronous);
     }
     QObject* object = component.createWithInitialProperties({
         {u"lab"_s, QVariant::fromValue<QObject*>(model)},
@@ -96,6 +86,14 @@ bool guiOpen(const EditorSpec& spec, std::string& error)
     winshun::debug("ra9fael.binarylab: QML workbench opened, window "
         + std::to_string(window->width()) + "x" + std::to_string(window->height())
         + " visible=" + std::to_string(window->isVisible() ? 1 : 0));
+    // The shell's fitHeight() runs on Component.onCompleted; log the settled
+    // size once the event loop gets there.
+    QPointer<QQuickWindow> logged = window;
+    QMetaObject::invokeMethod(qGuiApp, [logged] {
+        if (logged)
+            winshun::debug("ra9fael.binarylab: workbench settled at "
+                + std::to_string(logged->width()) + "x" + std::to_string(logged->height()));
+    }, Qt::QueuedConnection);
     return true;
 }
 

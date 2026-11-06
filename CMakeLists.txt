@@ -46,6 +46,7 @@ qt_add_library(BinaryLabApp SHARED
     main.cpp
     qmlapp/qmlmain.cpp
     qmlapp/EditorQml.cpp
+    qmlapp/WorkbenchModel.cpp
     qmlapp/BitsModel.cpp
     "${app_dir}/SystemTheme.cpp" "${app_dir}/SystemTheme.h"
     "${app_dir}/Phosphor.cpp" "${app_dir}/Phosphor.h"
@@ -61,7 +62,7 @@ target_compile_definitions(BinaryLabApp PRIVATE BINLAB_QML_WORKBENCH UNICODE _UN
 # speaks toml++ in its C++17 string world (char8_t off), and logic.h has always
 # built that way.
 set_target_properties(BinaryLabApp PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-set_source_files_properties(main.cpp qmlapp/qmlmain.cpp qmlapp/EditorQml.cpp qmlapp/BitsModel.cpp
+set_source_files_properties(main.cpp qmlapp/qmlmain.cpp qmlapp/EditorQml.cpp qmlapp/WorkbenchModel.cpp qmlapp/BitsModel.cpp
     PROPERTIES COMPILE_OPTIONS "/std:c++17")
 target_include_directories(BinaryLabApp PRIVATE
     "${CMAKE_SOURCE_DIR}" "${app_dir}" "${app_dir}/platform" "${core_dir}")
@@ -73,7 +74,13 @@ set(shared_qml
     Theme.qml Hook.qml UiScale.qml WindowEdge.qml HoverTip.qml DropMenu.qml Glyph.qml TitleBar.qml ToggleSwitch.qml FlatButton.qml
     InputBox.qml Caret.qml CenteredNumber.qml KeyCap.qml HotkeyRecorder.qml ListScrollBar.qml ListWheelScroll.qml
     ScrollPixelAlignment.qml SettingsSection.qml SettingRow.qml PageTabs.qml ScopeTabs.qml)
-set(binarylab_qml "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/BitsWindow.qml")
+set(binarylab_qml
+    "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/Workbench.qml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/BitsPage.qml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/BytesPage.qml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/StructPage.qml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/SettingsPage.qml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/HelpPage.qml")
 foreach(name IN LISTS shared_qml)
     list(APPEND binarylab_qml "${app_dir}/qml/${name}")
 endforeach()
