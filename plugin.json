@@ -7,7 +7,7 @@
   "description": "纯内存计算的嵌入式二进制工具：位运算与进制转换、hex/bin/oct 字节流解码、C 风格结构体排布；可选交互式位编辑器窗口。",
   "author": "ra9fael",
   "license": "MIT",
-  "permissions": ["ui", "clipboard:write"],
+  "permissions": ["ui", "clipboard:write", {"files:read": ["设置中选择的记录格式目录（*.toml）"]}],
   "runtime": {
     "mode": "resident",
     "program": "binarylab.exe",
@@ -60,6 +60,13 @@
       "options": ["fixed", "c"]
     },
     {
+      "key": "formatDir",
+      "type": "folder",
+      "title": {"zh": "记录格式目录", "en": "Record format folder"},
+      "hint": {"zh": "bytes fmt 读取此目录下的 *.toml（hextract 格式，只读，最多 64 个、每个 ≤64 KiB）；留空只用内置的两个 BLM 格式", "en": "bytes fmt reads *.toml here (hextract format, read-only, up to 64 files of 64 KiB); leave empty to use the two built-in BLM formats"},
+      "default": ""
+    },
+    {
       "key": "floatBar",
       "type": "choice",
       "title": {"zh": "浮点条带", "en": "Float composition bar"},
@@ -85,7 +92,7 @@
       "id": "bytes",
       "keyword": "bytes",
       "title": {"zh": "字节流解析", "en": "Byte stream parsing"},
-      "hint": {"zh": "例如 bytes hex u16le 34 12 78 56", "en": "e.g. bytes hex u16le 34 12 78 56"},
+      "hint": {"zh": "例如 bytes hex u16le 34 12 78 56 · bytes fmt 列出记录格式", "en": "e.g. bytes hex u16le 34 12 78 56 · bytes fmt lists record formats"},
       "actions": [
         {"id": "copyPrimary", "title": {"zh": "复制主值", "en": "Copy value"}, "key": "Enter"},
         {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": "Ctrl+Enter"},

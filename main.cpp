@@ -10,9 +10,12 @@
 #include "winshun.h"
 
 #include "editor.h"
+#include "formats_toml.h"
 #include "logic.h"
 
 #include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,6 +29,7 @@ struct Settings {
     bool editorOnEnter = false;
     bool cMode = false;            // evalMode=c: C integer promotions
     bool floatBar = false;         // floatBar=on: workbench opens with the bar shown
+    std::string formatDir;         // folder of user record formats (*.toml), UTF-8
 };
 
 Settings readSettings(const winshun::Json& s)
@@ -49,6 +53,7 @@ Settings readSettings(const winshun::Json& s)
     st.editorOnEnter = binlab::lower(text("bitsEnter", "copy")) == "editor";
     st.cMode = binlab::lower(text("evalMode", "fixed")) == "c";
     st.floatBar = binlab::lower(text("floatBar", "off")) == "on";
+    st.formatDir = winshun::trim(text("formatDir", ""));
     return st;
 }
 
@@ -163,6 +168,7 @@ const char* kSyntaxHelp =
     "      fields: get|set|clear|toggle VALUE HIGH:LOW [VALUE]\n"
     "bytes [hex|bin|oct] [u8|i8|u16le|u16be|u32le|u32be|u64le|u64be|f32le|f32be|f64le|f64be] DATA...\n"
     "      hex tokens: even number of digits; bin tokens: 8 bits; oct tokens: 000..377\n"
+    "bytes fmt [NAME [lsb|msb] HEX...]   record formats (hextract TOML); fmt alone lists them\n"
     "struct [pack=0|1|2|4|8|16] struct Name { u8 a; u32 b; u16 c[3]; };\n"
     "      also union, arrays, inline nested types, and named type references\n";
 
@@ -314,6 +320,121 @@ std::string editorExpression(const std::string& text)
         }
     }
     return expr;
+}
+
+// `bytes fmt <name> [lsb|msb] <hex...>`: a summary row, one row per record (up
+// to kMaxRecordRows), and a trailing-bytes row. The summary's chain flips the
+// record order so Shift+Enter compares lsb-first with msb-first.
+winshun::Items recordItems(const binlab::RecordsEval& e, const binlab::RecordFormat& f, bool zh)
+{
+    const std::string order = e.msbFirst ? "msb-first" : "lsb-first";
+    const std::string chain = "bytes fmt " + e.formatName + (e.msbFirst ? " lsb " : " msb ") + e.normalized;
+    const std::string icon = "color:#0F766E";
+    std::string subtitle = std::to_string(e.recordBytes) + tr(zh, " B/条", " B/record");
+    if (!f.rules.empty())
+        subtitle += tr(zh, " · 规则命中 ", " · rule hits ") + std::to_string(e.ruleHits)
+                    + tr(zh, " · 规则错误 ", " · rule errors ") + std::to_string(e.ruleErrors);
+    for (const std::string& w : e.warnings)
+        subtitle += " · warning: " + w;
+    subtitle += tr(zh, " · Shift+Enter 切换 ", " · Shift+Enter switches to ") + (e.msbFirst ? "lsb-first" : "msb-first");
+    winshun::Items items;
+    items.push_back(makeRow("bytes.fmt.summary",
+                            e.formatName + " · " + order + " · " + std::to_string(e.records.size())
+                                + tr(zh, " 条记录 · 尾 ", " records · trailing ") + std::to_string(e.trailing),
+                            subtitle, e.table, e.detail, chain, e.preview, icon, 100, zh, false, "bytes"));
+    for (std::size_t r = 0; r < e.records.size() && r < binlab::kMaxRecordRows; ++r) {
+        const binlab::Record& rec = e.records[r];
+        std::string line;
+        std::string detail = "#" + std::to_string(r) + " @" + std::to_string(rec.offset) + "\n";
+        for (std::size_t c = 0; c < rec.cells.size() && c < f.columns.size(); ++c) {
+            line += (line.empty() ? "" : "  ") + f.columns[c] + "=" + rec.cells[c].text;
+            detail += f.columns[c] + " = " + rec.cells[c].text + "\n";
+        }
+        std::string title = "#" + std::to_string(r) + "  " + line;
+        if (title.size() > 120)
+            title = title.substr(0, 117) + "...";
+        std::string sub = "@" + std::to_string(rec.offset);
+        if (rec.rule >= 0) {
+            sub += " · " + f.rules[static_cast<std::size_t>(rec.rule)].name + " (" + f.rules[static_cast<std::size_t>(rec.rule)].when + ")";
+            detail += "rule: " + f.rules[static_cast<std::size_t>(rec.rule)].name + "\n";
+        }
+        if (!rec.ruleError.empty()) {
+            sub += tr(zh, " · 规则错误：", " · rule error: ") + rec.ruleError;
+            detail += "rule error: " + rec.ruleError + "\n";
+        }
+        const std::string rowIcon = !rec.ruleError.empty() ? "color:#C0392B"
+                                    : rec.rule >= 0 && !f.rules[static_cast<std::size_t>(rec.rule)].bg.empty()
+                                        ? "color:" + f.rules[static_cast<std::size_t>(rec.rule)].bg
+                                        : "color:#7C3AED";
+        items.push_back(makeRow("bytes.fmt.record." + std::to_string(r), title, sub, line, detail, chain,
+                                e.preview + "\n" + detail, rowIcon, static_cast<int>(90 - r), zh, false, "bytes"));
+    }
+    if (e.records.size() > binlab::kMaxRecordRows) {
+        winshun::Item item("bytes.fmt.more",
+                           tr(zh, "另有 ", "") + std::to_string(e.records.size() - binlab::kMaxRecordRows)
+                               + tr(zh, " 条记录未逐行列出", " more records (see full details)"),
+                           tr(zh, "Ctrl+Enter 可复制完整表格", "Ctrl+Enter copies the whole table"));
+        item.invalid().withIcon("color:#B45309").withScore(60).withPreview(e.preview)
+            .withActions(rowActions(zh, false, false, false))
+            .withData(winshun::Json(winshun::Json::Object {
+                {"kind", "bytes"}, {"primary", e.table}, {"detail", e.detail}, {"chain", chain}, {"expand", false},
+            }));
+        items.push_back(std::move(item));
+    }
+    if (e.trailing) {
+        winshun::Item item("bytes.fmt.trailing",
+                           tr(zh, "末尾 ", "") + std::to_string(e.trailing) + tr(zh, " 字节未解码", " trailing bytes not decoded"),
+                           tr(zh, "一条记录需要 ", "a record needs ") + std::to_string(e.recordBytes)
+                               + tr(zh, " 字节；不返回伪造结果", " bytes; no fabricated value"));
+        item.invalid().withIcon("color:#C0392B").withScore(50).withCopy(e.normalized).withPreview(e.detail)
+            .withData(winshun::Json(winshun::Json::Object {
+                {"kind", "bytes"}, {"primary", e.normalized}, {"detail", e.detail}, {"chain", chain}, {"expand", false},
+            }));
+        items.push_back(std::move(item));
+    }
+    return items;
+}
+
+// `bytes fmt` alone: every loaded format, broken files in red with their error,
+// then folder-level notes (overrides, caps, a missing folder).
+winshun::Items formatListItems(const binlab::FormatSet& set, bool zh)
+{
+    winshun::Items items;
+    int score = 100;
+    for (const binlab::FormatEntry& e : set.entries) {
+        const std::string next = "bytes fmt " + e.name + " ";
+        if (e.ok) {
+            const binlab::RecordFormat& f = e.format;
+            std::string sub = e.source + " · " + std::to_string(f.wordBits) + " bit · "
+                              + (f.msbFirst ? "msb-first" : "lsb-first") + " · " + std::to_string(f.columns.size())
+                              + tr(zh, " 列", " columns");
+            if (!f.description.empty())
+                sub += " · " + f.description;
+            std::string detail = f.name + "\n" + sub + "\n";
+            for (const std::string& c : f.columns)
+                detail += "  " + c + "\n";
+            for (const std::string& w : f.warnings)
+                detail += "warning: " + w + "\n";
+            winshun::Item item = makeRow("bytes.fmt.list." + e.name, e.name, sub, next, detail, next, detail,
+                                         "color:#0F766E", score--, zh, false, "bytes");
+            item.withAutocomplete(next);
+            items.push_back(std::move(item));
+        } else {
+            winshun::Item item("bytes.fmt.list." + e.source, e.name + tr(zh, " · 加载失败", " · failed to load"), e.error);
+            item.invalid().withIcon("color:#C0392B").withScore(score--).withCopy(e.error).withPreview(e.error)
+                .withData(winshun::Json(winshun::Json::Object {
+                    {"kind", "bytes"}, {"primary", e.error}, {"detail", e.error}, {"chain", next}, {"expand", false},
+                }));
+            items.push_back(std::move(item));
+        }
+    }
+    for (std::size_t i = 0; i < set.notes.size(); ++i) {
+        winshun::Item item("bytes.fmt.note." + std::to_string(i), set.notes[i],
+                           tr(zh, "记录格式目录在设置中选择", "The record format folder is chosen in settings"));
+        item.invalid().withIcon("color:#B45309").withScore(10).withCopy(set.notes[i]).withPreview(set.notes[i]);
+        items.push_back(std::move(item));
+    }
+    return items;
 }
 
 winshun::Items bytesItems(const binlab::BytesEval& e, bool zh)
@@ -468,6 +589,33 @@ struct BinaryLab : winshun::Plugin {
         binlab::closeEditorAndWait(1500);
     }
 
+    // Record formats: built-ins plus the settings folder. Scanned on the first
+    // query after start (the SDK has no initialize hook) and on every
+    // settingsChanged, so re-saving settings also picks up edited files. The
+    // editor window gets its own shared_ptr snapshot, hence the mutex.
+    std::mutex m_formatsLock;
+    std::shared_ptr<const binlab::FormatSet> m_formats;
+
+    void reloadFormats(const Settings& st)
+    {
+        auto loaded = std::make_shared<const binlab::FormatSet>(binlab::loadFormatDir(winshun::wide(st.formatDir)));
+        winshun::debug("ra9fael.binarylab: record formats loaded: " + std::to_string(loaded->entries.size()));
+        std::lock_guard<std::mutex> lock(m_formatsLock);
+        m_formats = std::move(loaded);
+    }
+
+    std::shared_ptr<const binlab::FormatSet> formats(const Settings& st)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_formatsLock);
+            if (m_formats)
+                return m_formats;
+        }
+        reloadFormats(st);
+        std::lock_guard<std::mutex> lock(m_formatsLock);
+        return m_formats;
+    }
+
     winshun::Items query(const winshun::Query& q) override
     {
         const bool zh = chinese();
@@ -503,6 +651,15 @@ struct BinaryLab : winshun::Plugin {
                                             st.cMode ? binlab::EvalMode::C : binlab::EvalMode::Fixed);
             items = r.success ? bitsItems(r.value, zh, st.editorOnEnter)
                               : winshun::Items {makeError(r.failure, zh)};
+        } else if (command == "bytes" && (binlab::lower(text) == "fmt" || binlab::startsWith(binlab::lower(text), "fmt "))) {
+            const auto set = formats(st);
+            if (binlab::lower(text) == "fmt") {
+                items = formatListItems(*set, zh);
+            } else {
+                const auto r = binlab::evalRecords(text, *set);
+                items = r.success ? recordItems(r.value, *set->find(r.value.formatName), zh)
+                                  : winshun::Items {makeError(r.failure, zh)};
+            }
         } else if (command == "bytes") {
             const auto r = binlab::evalBytes(text, st.defaultEndian);
             items = r.success ? bytesItems(r.value, zh)
@@ -595,9 +752,9 @@ struct BinaryLab : winshun::Plugin {
 
     void settingsChanged(const winshun::Json& s) override
     {
-        // The base class already replaced settings(); log only to stderr.
-        (void)s;
+        // The base class already replaced settings(); rescan the format folder.
         winshun::debug("ra9fael.binarylab: settingsChanged");
+        reloadFormats(readSettings(s));
     }
 
     void cancel(long long queryId) override

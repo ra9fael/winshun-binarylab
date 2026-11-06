@@ -5,6 +5,10 @@
 // #pragma pack, sizeof, alignof and offsetof in this translation unit.
 #include "logic.h"
 #include "formats.h"
+#include "formats_toml.h"
+
+#include <filesystem>
+#include <fstream>
 
 #include <cstddef>
 #include <cstdint>
@@ -971,6 +975,111 @@ int main()
         binlab::RawRule badColor = a1;
         badColor.bg = "red";
         CHECK(!compileOne("d", 8, {rawField("a", "u8")}, {badColor}).success, "colors must be #rrggbb");
+    }
+    {
+        // ---- record format files (toml++) -------------------------------------
+        namespace fs = std::filesystem;
+        const fs::path fixtures = fs::u8path(BINLAB_FIXTURES);
+        const auto readText = [](const fs::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        };
+        for (const binlab::RawFormat& b : binlab::builtinRawFormats()) {
+            const std::string file = b.name + ".toml";
+            const auto r = binlab::parseFormatToml(readText(fixtures / file), file);
+            CHECK(r.success, file + " parses");
+            if (!r.success)
+                continue;
+            const binlab::RawFormat& t = r.value;
+            bool same = t.name == b.name && t.description == b.description && t.wordBits == b.wordBits
+                        && t.byteOrder == b.byteOrder && t.fields.size() == b.fields.size()
+                        && t.rules.size() == b.rules.size();
+            for (std::size_t i = 0; same && i < t.fields.size(); ++i) {
+                const binlab::RawField& x = t.fields[i];
+                const binlab::RawField& y = b.fields[i];
+                same = x.name == y.name && x.type == y.type && x.count == y.count && x.hasBits == y.hasBits
+                       && x.radix == y.radix && x.hasScale == y.hasScale;
+            }
+            for (std::size_t i = 0; same && i < t.rules.size(); ++i)
+                same = t.rules[i].when == b.rules[i].when && t.rules[i].bg == b.rules[i].bg
+                       && t.rules[i].fg == b.rules[i].fg && t.rules[i].name == b.rules[i].name;
+            CHECK(same, file + " matches the built-in table field for field");
+        }
+
+        const auto parse = [](const std::string& text) { return binlab::parseFormatToml(text, "t.toml"); };
+        const auto compiles = [&](const std::string& text) {
+            const auto r = parse(text);
+            return r.success && binlab::compileFormat(r.value).success;
+        };
+        const std::string head = "[format]\nname = \"t\"\nword_bits = 16\n";
+        CHECK(compiles(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\n"), "minimal format compiles");
+        const auto bitsScale = parse(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\nbits = \"11:4\"\nscale = 0.5\nradix = \"hex\"\n");
+        CHECK(bitsScale.success && bitsScale.value.fields[0].bitHi == 11 && bitsScale.value.fields[0].bitLo == 4
+                  && bitsScale.value.fields[0].hasScale && bitsScale.value.fields[0].scale == 0.5,
+              "bits hi:lo, scale and radix are read");
+        const auto oneBit = parse(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\nbits = 3\n");
+        CHECK(oneBit.success && oneBit.value.fields[0].bitHi == 3 && oneBit.value.fields[0].bitLo == 3,
+              "an integer bits value is a single bit");
+        CHECK(parse(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\nbits = \"x:1\"\n").failure.message.find("hi:lo")
+                  != std::string::npos, "bad bits text is rejected");
+        const auto syntax = parse("[format]\nname = \"t\"\nword_bits = 16\n[[field]\n");
+        CHECK(!syntax.success && syntax.failure.message.find("t.toml:4") == 0, "TOML syntax error carries its line");
+        const auto unknownKey = parse(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\ncolour = 1\n");
+        CHECK(!unknownKey.success && unknownKey.failure.message.find("t.toml:7") == 0
+                  && unknownKey.failure.message.find("colour") != std::string::npos,
+              "unknown key is an error with the line of the key");
+        CHECK(!parse("[format]\nname = \"t\"\nword_bits = \"16\"\n").success, "word_bits must be an integer");
+        CHECK(!parse("[format]\nword_bits = 16\n").success, "format.name is required");
+        CHECK(!parse("name = \"t\"\n").success, "a [format] table is required");
+        CHECK(!parse(head + "field = 1\n").success, "field must be an array of tables");
+        CHECK(!compiles("[format]\nname = \"t\"\nword_bits = 12\n[[field]]\nname = \"a\"\ntype = \"u8\"\n"),
+              "word_bits not a multiple of 8");
+        CHECK(!compiles(head + "[[field]]\nname = \"a\"\ntype = \"u32\"\n"), "fields wider than the word");
+        CHECK(!compiles(head + "[[field]]\nname = \"a\"\ntype = \"u12\"\n"), "unknown field type");
+        CHECK(!compiles(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\nbits = \"16:0\"\n"), "bits beyond the type");
+        CHECK(!compiles(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\n[[rule]]\nwhen = \"a > 0\"\n"),
+              "a rule without colors");
+        const auto dupRule = parse(head + "[[field]]\nname = \"a\"\ntype = \"u16\"\n"
+                                   "[[rule]]\nwhen = \"a > 0\"\nbg = \"#ff0000\"\n[[rule]]\nwhen = \"a > 0\"\nfg = \"#00ff00\"\n");
+        CHECK(dupRule.success && binlab::compileFormat(dupRule.value).success
+                  && binlab::compileFormat(dupRule.value).value.warnings.size() == 1,
+              "a duplicate rule only warns");
+
+        // Directory loading: the fixtures override both built-ins by name.
+        const binlab::FormatSet fromFixtures = binlab::loadFormatDir(fixtures.wstring());
+        CHECK(fromFixtures.entries.size() == 2 && fromFixtures.notes.size() == 2
+                  && fromFixtures.find("blm_rawdata_256") != nullptr
+                  && fromFixtures.find("blm_rawdata_256")->source == "blm_rawdata_256.toml",
+              "fixture files override the built-in formats");
+        CHECK(binlab::loadFormatDir(L"").entries.size() == 2, "no folder: built-ins only");
+        const binlab::FormatSet missing = binlab::loadFormatDir(L"Z:\\binarylab\\no\\such\\dir");
+        CHECK(missing.entries.size() == 2 && missing.notes.size() == 1, "missing folder is a note");
+
+        std::error_code ec;
+        const fs::path tmp = fs::temp_directory_path(ec) / "binarylab_format_test";
+        fs::remove_all(tmp, ec);
+        fs::create_directories(tmp, ec);
+        const auto put = [&](const char* name, const std::string& text) {
+            std::ofstream out(tmp / name, std::ios::binary);
+            out << text;
+        };
+        put("a_good.toml", head + "[[field]]\nname = \"a\"\ntype = \"u16\"\n");
+        put("b_broken.toml", "[format\n");
+        put("c_huge.toml", std::string(70 * 1024, '#'));
+        put("notes.txt", "ignored");
+        const binlab::FormatSet mixed = binlab::loadFormatDir(tmp.wstring());
+        CHECK(mixed.entries.size() == 5, "built-ins + three toml files, other extensions ignored");
+        const binlab::FormatEntry* broken = mixed.entry("b_broken");
+        CHECK(broken != nullptr && !broken->ok && broken->error.find("b_broken.toml:1") == 0,
+              "a broken file is listed with its error");
+        const binlab::FormatEntry* huge = mixed.entry("c_huge");
+        CHECK(huge != nullptr && !huge->ok && huge->error.find("64 KiB") != std::string::npos, "file size cap");
+        CHECK(mixed.find("t") != nullptr, "a good file next to broken ones still loads");
+        const auto decoded = binlab::evalRecords("fmt t lsb 34 12", mixed);
+        CHECK(decoded.success && decoded.value.records.size() == 1 && decoded.value.records[0].cells[0].u == 0x1234,
+              "a user format decodes");
+        CHECK(!binlab::evalRecords("fmt b_broken 34 12", mixed).success, "a broken format cannot decode");
+        fs::remove_all(tmp, ec);
     }
     std::cout << "binarylab logic tests: " << (g_total - g_failed) << "/" << g_total << " passed\n";
     if (g_failed)

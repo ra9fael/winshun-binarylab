@@ -11,6 +11,8 @@ add_executable(binarylab main.cpp)
 target_compile_definitions(binarylab PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 # The v2 editor window: user32 (windows, DPI) and gdi32 (painting).
 target_link_libraries(binarylab PRIVATE user32 gdi32)
+# toml++ (record format files) is vendored; SYSTEM keeps its warnings out of /W4 and -Wall.
+target_include_directories(binarylab SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/third_party/tomlplusplus")
 
 if(MSVC)
     target_compile_options(binarylab PRIVATE /utf-8 /W4 /permissive-)
@@ -26,10 +28,12 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}")
 endforeach()
 
-# Pure-logic tests: logic.h has no OS dependency, so they build and run on any
+# Pure-logic tests: logic.h and formats.h have no OS dependency, so they build and run on any
 # C++17 compiler without starting a plugin process.
 add_executable(binarylab_tests tests/test_logic.cpp)
 target_include_directories(binarylab_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_definitions(binarylab_tests PRIVATE BINLAB_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")
+target_include_directories(binarylab_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/third_party/tomlplusplus")
 if(MSVC)
     target_compile_options(binarylab_tests PRIVATE /utf-8 /W4 /permissive-)
 else()
