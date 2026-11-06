@@ -13,6 +13,9 @@ CMakeFiles/
 binarylab.exe
 binarylab-*.exe
 BinaryLabApp.dll
+# the locked-exe rebuild workaround's renames (423e507)
+*.locked.*.exe
+*.locked.*.dll
 
 dist/
 __pycache__/
