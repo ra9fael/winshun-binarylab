@@ -301,6 +301,50 @@ winshun::Items emptyBitsItems(const Settings& st, bool zh)
     return items;
 }
 
+// `bytes ` with no arguments used to show only the help examples, which hid
+// the workbench. Mirror the bits page: a dedicated entry row first, then the
+// examples.
+winshun::Items emptyBytesItems(const Settings& st, bool zh)
+{
+    (void)st;
+    const winshun::Json extra(winshun::Json::Object {
+        {"expression", ""},
+    });
+    winshun::Items items;
+    items.push_back(makeRow("bytes.open.workbench.empty",
+                            tr(zh, "打开字节流工作台 · 空白", "Open byte workbench · blank"),
+                            tr(zh, "Enter 打开 · hex/bin/oct 字节流，或 fmt <格式名> <hex...> 解码记录",
+                               "Enter opens · hex/bin/oct bytes, or fmt <format> <hex...> for records"),
+                            "hex 34 12 78 56",
+                            tr(zh, "字节流工作台 · 空白\n\n", "Byte workbench · blank\n\n") + kSyntaxHelp,
+                            "bytes ", kSyntaxHelp, "color:#0F766E", 101, zh, false, "bytes",
+                            winshun::Json(), true, extra, true));
+    for (winshun::Item& example : helpItems("bytes", zh))
+        items.push_back(std::move(example));
+    return items;
+}
+
+// Same for `struct `: the struct tab of the workbench is a real page, so the
+// blank query gets an entry row instead of only examples.
+winshun::Items emptyStructItems(bool zh)
+{
+    const winshun::Json extra(winshun::Json::Object {
+        {"expression", ""},
+    });
+    winshun::Items items;
+    items.push_back(makeRow("struct.open.workbench.empty",
+                            tr(zh, "打开结构体工作台 · 空白", "Open struct workbench · blank"),
+                            tr(zh, "Enter 打开 · 输入 struct 定义，如 struct Point { int x; int y; };",
+                               "Enter opens · type a struct definition, e.g. struct Point { int x; int y; };"),
+                            "struct Point { int x; int y; };",
+                            tr(zh, "结构体工作台 · 空白\n\n", "Struct workbench · blank\n\n") + kSyntaxHelp,
+                            "struct ", kSyntaxHelp, "color:#B45309", 101, zh, false, "struct",
+                            winshun::Json(), true, extra, true));
+    for (winshun::Item& example : helpItems("struct", zh))
+        items.push_back(std::move(example));
+    return items;
+}
+
 // The host sends the words after the keyword in ActionRequest::text. Accept
 // the full box text too, so a host that includes "bits " still opens a window
 // whose expression parses.
@@ -558,6 +602,18 @@ winshun::Items structItems(const binlab::Layout& l, bool zh)
     const std::string primary = "sizeof(" + name + ") = " + std::to_string(l.size)
                                 + "  alignof(" + name + ") = " + std::to_string(l.align);
     winshun::Items items;
+    // Dedicated workbench entry, mirroring bits/bytes: Enter always opens the
+    // struct tab with this definition preloaded.
+    const winshun::Json entryExtra(winshun::Json::Object {
+        {"expression", l.text},
+    });
+    items.push_back(makeRow("struct.open.workbench",
+                            tr(zh, "打开结构体工作台 · ", "Open the struct workbench · ") + name,
+                            tr(zh, "Enter 打开 · 布局、字节排布与成员表在同一页查看",
+                               "Enter opens · layout, byte map and member table on one page"),
+                            l.text, summary + "\n" + l.text, "struct ", l.text,
+                            "color:#B45309", 101, zh, false, "struct",
+                            winshun::Json(), true, entryExtra, true));
     items.push_back(makeRow("struct.summary", summary, subtitle, primary, l.text, l.chain,
                             l.text, "color:#B45309", 100, zh, true, "struct", members));
     items.push_back(makeRow("struct.map", tr(zh, "字节排布图", "Byte map"),
@@ -661,8 +717,15 @@ struct BinaryLab : winshun::Plugin {
             return {makeError(binlab::fail("E_INPUT_TOO_LARGE", "input exceeds 16 KiB", "bits u8 0xA5 & 0x0F"), zh)};
         if (text == "help" || text == "?" || text == "帮助")
             return helpItems(command, zh);
-        if (text.empty())
-            return command == "bits" ? emptyBitsItems(st, zh) : helpItems(command, zh);
+        if (text.empty()) {
+            if (command == "bits")
+                return emptyBitsItems(st, zh);
+            if (command == "bytes")
+                return emptyBytesItems(st, zh);
+            if (command == "struct")
+                return emptyStructItems(zh);
+            return helpItems(command, zh);
+        }
 
         winshun::Items items;
         if (command == "bits") {
@@ -714,10 +777,13 @@ struct BinaryLab : winshun::Plugin {
         if (a.action == "openEditor") {
             const Settings st = readSettings(settings());
             binlab::EditorSpec spec;
-            // The bytes page opens for a bytes row (data.kind == "bytes");
-            // everything else is the bits workbench.
-            spec.mode = data["kind"].toString() == "bytes" ? binlab::EditorSpec::Mode::Bytes
-                                                             : binlab::EditorSpec::Mode::Bits;
+            // The bytes page opens for a bytes row (data.kind == "bytes") and
+            // the struct tab for a struct row; everything else is the bits
+            // workbench.
+            const std::string rowKind = data["kind"].toString();
+            spec.mode = rowKind == "bytes" ? binlab::EditorSpec::Mode::Bytes
+                      : rowKind == "struct" ? binlab::EditorSpec::Mode::Struct
+                                             : binlab::EditorSpec::Mode::Bits;
             spec.value = std::strtoull(data["valueHex"].toString().c_str(), nullptr, 16);
             spec.width = static_cast<int>(data["width"].toInt(st.defaultWidth));
             if (spec.mode == binlab::EditorSpec::Mode::Bytes) {
