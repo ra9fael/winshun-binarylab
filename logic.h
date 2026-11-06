@@ -2098,6 +2098,22 @@ inline std::string floatBreakdown(std::uint64_t raw, const FloatSpec& f)
     return out.str();
 }
 
+// A token that is bare hex data ("deadbeef", "0x3412"): every character is a
+// hex digit after an optional 0x prefix. Used to accept the hex keyword being
+// omitted; anything else keeps the explicit E_UNKNOWN_FORMAT.
+inline bool isHexData(const std::string& token)
+{
+    std::string s = token;
+    if (s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+        s = s.substr(2);
+    if (s.empty())
+        return false;
+    for (char c : s)
+        if (digitValue(c) < 0)
+            return false;
+    return true;
+}
+
 inline Outcome<BytesEval> evalBytes(const std::string& input, const std::string& defaultEndian)
 {
     const std::string hint = "bytes hex u16le 34 12 78 56";
@@ -2108,25 +2124,48 @@ inline Outcome<BytesEval> evalBytes(const std::string& input, const std::string&
         return failWith<BytesEval>(fail("E_EMPTY", "no byte stream", hint));
 
     BytesEval e;
-    e.format = lower(tokens[0]);
-    if (e.format != "hex" && e.format != "bin" && e.format != "oct")
-        return failWith<BytesEval>(fail("E_UNKNOWN_FORMAT", "format must be hex, bin or oct", hint));
-
-    std::size_t at = 1;
     TypeSpec spec;
-    if (at < tokens.size() && resolveType(tokens[at], defaultEndian, spec)) {
-        ++at;
+    std::size_t at = 0;
+    e.format = lower(tokens[0]);
+    bool typeSet = false;
+    if (e.format == "hex" || e.format == "bin" || e.format == "oct") {
+        at = 1;
+    } else if (resolveType(tokens[0], defaultEndian, spec)) {
+        // Format keyword omitted: "u32le 34 12 78 56" is hex with that type.
+        e.format = "hex";
+        typeSet = true;
+        at = 1;
     } else {
         // Same honesty as bits: a float name the table lacks is a type error,
-        // not a byte token, so "bytes hex f128 00 00" does not answer "not a
-        // hex digit".
+        // not a byte token, so "bytes f128 00 00" does not answer "not a hex
+        // digit".
         std::string spelling;
-        if (at < tokens.size() && unsupportedFloatName(tokens[at], spelling))
+        if (unsupportedFloatName(tokens[0], spelling))
             return failWith<BytesEval>(fail("E_FLOAT_TYPE",
                 spelling + " is not a float container this tool implements",
                 "use " + floatNameList() + ", e.g. bytes hex f16le 00 3e"));
-        if (!resolveType("u8", defaultEndian, spec))
-            return failWith<BytesEval>(fail("E_INTERNAL", "default type failed to resolve", hint));
+        if (isHexData(tokens[0])) {
+            // "deadbeefdeadbeef": bare hex data, the hex keyword is implied.
+            e.format = "hex";
+        } else {
+            return failWith<BytesEval>(fail("E_UNKNOWN_FORMAT", "format must be hex, bin or oct", hint));
+        }
+    }
+
+    if (!typeSet) {
+        if (at < tokens.size() && resolveType(tokens[at], defaultEndian, spec)) {
+            ++at;
+        } else {
+            // A float name the table lacks is a type error, not a byte token,
+            // so "bytes hex f128 00 00" does not answer "not a hex digit".
+            std::string spelling;
+            if (at < tokens.size() && unsupportedFloatName(tokens[at], spelling))
+                return failWith<BytesEval>(fail("E_FLOAT_TYPE",
+                    spelling + " is not a float container this tool implements",
+                    "use " + floatNameList() + ", e.g. bytes hex f16le 00 3e"));
+            if (!resolveType("u8", defaultEndian, spec))
+                return failWith<BytesEval>(fail("E_INTERNAL", "default type failed to resolve", hint));
+        }
     }
     e.typeName = spec.name;
 

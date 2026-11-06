@@ -403,6 +403,26 @@ int main()
                   && le.value.dump.find("34 12") != std::string::npos, "bytes hexdump layout");
     }
 
+    // ---- bytes: the format keyword may be omitted ------------------------------
+    {
+        // A leading type token implies hex: the workbench shorthand "u32 0x88775545".
+        const auto typed = binlab::evalBytes("u32le 78 56 34 12", "le");
+        CHECK(typed.success && !typed.value.words.empty() && typed.value.words[0].primary == "0x12345678",
+              "bytes type token implies hex format");
+        const auto typed0x = binlab::evalBytes("u32 0x88775545", "le");
+        CHECK(typed0x.success && typed0x.value.data.size() == 4, "bytes type token with 0x word");
+        // Bare hex data also implies hex, defaulting to u8 words.
+        const auto bare = binlab::evalBytes("deadbeefdeadbeef", "le");
+        CHECK(bare.success && bare.value.data.size() == 8 && bare.value.normalized == "DE AD BE EF DE AD BE EF",
+              "bytes bare compact hex implies hex");
+        const auto bare0x = binlab::evalBytes("0x88775545", "le");
+        CHECK(bare0x.success && bare0x.value.normalized == "88 77 55 45", "bytes bare 0x-prefixed hex");
+        const auto mixed = binlab::evalBytes("deadbeef 01 02", "le");
+        CHECK(mixed.success && mixed.value.normalized == "DE AD BE EF 01 02", "bytes bare hex mixed with spaced bytes");
+        CHECK(binlab::evalBytes("f128 00 00", "le").failure.code == "E_FLOAT_TYPE",
+              "bytes omitted format still reports unsupported float types");
+    }
+
     // ---- bytes: empty, invalid, dependency-free failure -----------------------
     CHECK(!binlab::evalBytes("", "le").success, "bytes empty input");
     CHECK(!binlab::evalBytes("hex", "le").success, "bytes no data");
