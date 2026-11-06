@@ -802,6 +802,12 @@ lay_bits2 = bytes_lay(0)
 assert int(lay_bits2["mode"]) == 0, "toBits opens the bits page"
 assert edit_text(eb) == "u16 0x5678", f"bits expression from the word: {edit_text(eb)!r}"
 
+# ---- bare hex: the format keyword is optional --------------------------------
+lay_h = open_bytes("deadbeefdeadbeef", 305)
+assert int(lay_h["mode"]) == 1 and lay_h["bytesMode"] == "scalar", "bare hex opens the scalar bytes view"
+assert edit_text(eb) == "deadbeefdeadbeef", f"bare hex stays as typed: {edit_text(eb)!r}"
+assert int(lay_h["clientH"]) == int(lay_h["statusTop"]) + 46, "bare hex keeps the two-row status bar"
+
 # ---- record formats on the bytes page ----------------------------------------
 rec = "01 00 00 00 02 00 00 00 fb ff 02 00 03 00 04 00 05 00 06 00 09 00 00 00 00 00 00 00 00 00 00 00"
 lay_r = open_bytes(f"fmt blm_rawdata_256 lsb {rec} {rec} aa", 310)

@@ -850,13 +850,16 @@ void computeLayout(HDC dc)
     // Five tabs fit both languages in the narrowest window (measured:
     // 298 px zh / 287 px en at 480 px client width), so the right end of the
     // top bar is deliberately left empty. The float-bar pill lives there, and
-    // is sized from measured label text for the same reason.
-    {
+    // is sized from measured label text for the same reason. The bar is a
+    // bits-page tool, so the pill only exists in bits mode.
+    if (bits) {
         HFONT pillFont = uiFont(12, false, s.zh);
         const int lw = textWidth(dc, pillFont, wideFromUtf8(s.zh ? "浮点条带" : "float bar"));
         DeleteObject(pillFont);
         const int pw = lw + 22;
         s.rcBarToggle = { s.clientW - 12 - pw, 6, s.clientW - 12, kTopH - 6 };
+    } else {
+        s.rcBarToggle = {};
     }
     s.resultRows = 0;
     if (bits) {
@@ -1649,8 +1652,11 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, RGB(128, 128, 128));
             RECT t { rc.left + 8, rc.top, rc.right - 6, rc.bottom };
-            const std::wstring cue = s.zh ? L"输入表达式 · u8 0xA5 & 0x0F · 4M · f64 1.5"
-                                          : L"Expr · u8 0xA5 & 0x0F · 4M · f64 1.5";
+            const std::wstring cue = s.mode == EditorSpec::Mode::Bytes
+                ? (s.zh ? L"hex u16le 34 12 78 56 · fmt blm_rawdata_256 <hex...>"
+                        : L"hex u16le 34 12 78 56 · fmt blm_rawdata_256 <hex...>")
+                : (s.zh ? L"输入表达式 · u8 0xA5 & 0x0F · 4M · f64 1.5"
+                        : L"Expr · u8 0xA5 & 0x0F · 4M · f64 1.5");
             DrawTextW(dc, cue.c_str(), -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             SelectObject(dc, old);
             DeleteObject(font);
@@ -1865,9 +1871,29 @@ int bytesMinWidth(HDC dc)
     SelectObject(dc, toolFont);
     const auto labelW = [&](const std::string& t) { return textWidth(dc, toolFont, wideFromUtf8(t)) + 10; };
     const int segW = std::max(textWidth(dc, toolFont, L"BE"), textWidth(dc, toolFont, L"f64")) + 16;
+    // The kind buttons are sized from their labels — a fixed width truncates
+    // "unsigned u" at zh text widths.
+    int kindW = 0;
+    for (int i = 0; i < 3; ++i)
+        kindW = std::max(kindW, textWidth(dc, toolFont, wideFromUtf8(kindName(i, s.zh))) + 16);
     tw = std::max(tw, kGridMargin + labelW(s.zh ? "位宽" : "Width") + 4 * 36 + 16 + labelW(s.zh ? "类型" : "Type")
-                           + labelW(s.zh ? "类型" : "Type") + 3 * segW + kGridMargin + 120);
+                           + 3 * kindW + 12 + labelW("LE/BE") + 2 * segW + kGridMargin);
     tw = std::max(tw, 560);
+    // Word readout strip at the widest type (u64): HEX + DEC share row 1, the
+    // BIN chip and the handoff button wrap to row 2.
+    HFONT monoP = monoFont(12, false);
+    SelectObject(dc, monoP);
+    const int hexVW = textWidth(dc, monoP, wideFromUtf8("0x" + std::string(16, 'F')));
+    const int decVW = textWidth(dc, monoP, wideFromUtf8(std::string(20, '8')));
+    const int binVW = textWidth(dc, monoP, wideFromUtf8("0b" + std::string(64, '1')));
+    SelectObject(dc, toolFont);
+    const auto chipW = [&](const char* label, int valueW) {
+        return 8 + textWidth(dc, toolFont, wideFromUtf8(label)) + 4 + valueW + 8;
+    };
+    const int btnW = textWidth(dc, toolFont, wideFromUtf8(s.zh ? "送到位运算页" : "Send to Bits")) + 24;
+    tw = std::max(tw, 12 + chipW("HEX ", hexVW) + 6 + chipW("DEC ", decVW) + 12);
+    tw = std::max(tw, 12 + chipW("BIN ", binVW) + 8 + btnW + 12);
+    DeleteObject(monoP);
     SelectObject(dc, old);
     DeleteObject(toolFont);
     DeleteObject(f);
@@ -1907,9 +1933,12 @@ void computeBytesLayout(HDC dc)
         }
         x += 12;
         s.rcToolLabel[1] = { x, s.toolTop, x += labelW(s.zh ? "类型" : "Type"), s.toolTop + kToolH };
+        int kindW = 0;
+        for (int i = 0; i < 3; ++i)
+            kindW = std::max(kindW, textWidth(dc, toolFont, wideFromUtf8(kindName(i, s.zh))) + 16);
         for (int i = 0; i < 3; ++i) {
-            s.rcKindBtn[i] = { x, s.toolTop, x + segW, s.toolTop + kToolH };
-            x += segW;
+            s.rcKindBtn[i] = { x, s.toolTop, x + kindW, s.toolTop + kToolH };
+            x += kindW;
         }
         x += 12;
         s.rcToolLabel[2] = { x, s.toolTop, x += labelW("LE/BE"), s.toolTop + kToolH };
@@ -1962,24 +1991,55 @@ void computeBytesLayout(HDC dc)
     s.byteW = 2 * s.monoW + 10;
     s.asciiLeft = s.offW + 8 + 16 * s.byteW + kNibbleGap + 4;
 
-    // word/record readout row + → 位运算 button, fixed two-line strip
+    // word/record readout row + handoff button; in scalar mode the strip
+    // wraps BIN to a second row when the three chips cannot share the width.
     s.gridTop = s.byteTop + kByteHeadH + kByteRows * kByteRowH + 4;
     HFONT uiProbe = uiFont(12, false, s.zh);
     old = SelectObject(dc, uiProbe);
-    const std::string toBits = s.zh ? "→ 位运算" : "→ Bits";
+    const std::string toBits = s.zh ? "送到位运算页" : "Send to Bits";
     const int btnW = textWidth(dc, uiProbe, wideFromUtf8(toBits)) + 24;
     SelectObject(dc, old);
     DeleteObject(uiProbe);
     const int stripTop = s.gridTop;
     const int stripH = 26;
+    const int strip2Top = stripTop + stripH + 4;
     s.rcToBits = { s.clientW - 12 - btnW, stripTop, s.clientW - 12, stripTop + stripH };
     if (!s.bytesIsRecords) {
-        int cx = 12;
-        const char* labels[3] = { "HEX ", s.bytesType.flt ? "FLOAT " : "DEC ", "BIN " };
-        for (int i = 0; i < 3; ++i) {
-            const int w = static_cast<int>(std::string(labels[i]).size()) * 6 + 64;
-            s.rcByteChip[i] = { cx, stripTop, cx + w, stripTop + stripH };
-            cx += w + 6;
+        // Chip widths come from the current type's worst-case value: HEX
+        // 0x + nibbles, DEC up to 20 digits (FLOAT keeps the same budget),
+        // BIN 0b + every bit. Fixed widths clipped exactly the values the
+        // chips exist to show.
+        HFONT chipMono = monoFont(12, false);
+        HFONT chipUi = uiFont(11, false, s.zh);
+        old = SelectObject(dc, chipMono);
+        const int typeBits = s.bytesType.size * 8; // worst-case value width in bits
+        const int nibbles = std::max(1, (typeBits + 3) / 4);
+        const int hexVW = textWidth(dc, chipMono,
+                                    wideFromUtf8("0x" + std::string(static_cast<std::size_t>(nibbles), 'F')));
+        const int decVW = textWidth(dc, chipMono, wideFromUtf8(std::string(20, '8')));
+        const int binVW = textWidth(dc, chipMono,
+                                    wideFromUtf8("0b" + std::string(static_cast<std::size_t>(typeBits), '1')));
+        SelectObject(dc, chipUi);
+        const auto cw = [&](const char* label, int valueW) {
+            return 8 + textWidth(dc, chipUi, wideFromUtf8(label)) + 4 + valueW + 8;
+        };
+        const int hx = cw("HEX ", hexVW);
+        const int dx = cw(s.bytesType.flt ? "FLOAT " : "DEC ", decVW);
+        const int bx = cw("BIN ", binVW);
+        SelectObject(dc, old);
+        DeleteObject(chipMono);
+        DeleteObject(chipUi);
+        const bool wrap = 12 + hx + 6 + dx + 6 + bx + 8 + btnW + 12 > s.clientW;
+        if (!wrap) {
+            s.rcByteChip[0] = { 12, stripTop, 12 + hx, stripTop + stripH };
+            s.rcByteChip[1] = { 12 + hx + 6, stripTop, 12 + hx + 6 + dx, stripTop + stripH };
+            s.rcByteChip[2] = { 12 + hx + 6 + dx + 6, stripTop, 12 + hx + 6 + dx + 6 + bx, stripTop + stripH };
+            s.clientH = std::max(s.clientH, stripTop + stripH + 10 + kStatusH);
+        } else {
+            s.rcByteChip[0] = { 12, stripTop, 12 + hx, stripTop + stripH };
+            s.rcByteChip[1] = { 12 + hx + 6, stripTop, 12 + hx + 6 + dx, stripTop + stripH };
+            s.rcByteChip[2] = { 12, strip2Top, 12 + bx, strip2Top + stripH };
+            s.clientH = std::max(s.clientH, strip2Top + stripH + 10 + kStatusH);
         }
         s.rcCellChip = {};
     } else {
@@ -1987,10 +2047,11 @@ void computeBytesLayout(HDC dc)
         s.rcByteChip[1] = {};
         s.rcByteChip[2] = {};
         s.rcCellChip = { 12, stripTop, s.rcToBits.left - 8, stripTop + stripH };
+        s.clientH = std::max(s.clientH, stripTop + stripH + 10 + kStatusH);
     }
-    s.rcTable = { s.offW + 8, s.byteTop + kByteHeadH, s.clientW - 12, s.byteTop + kByteHeadH + kByteRows * kByteRowH };
-
-    s.clientH = std::max(s.clientH, stripTop + stripH + 10 + kStatusH);
+    // The interactive table area (records and scalar pages share the geometry).
+    s.rcTable = { s.offW + 8, s.byteTop + kByteHeadH, s.clientW - 12,
+                  s.byteTop + kByteHeadH + kByteRows * kByteRowH };
     s.bytesLaidOut = s.clientW * 4 + (s.bytesIsRecords ? 2 : 1) + static_cast<int>(s.clientH);
     (void)dc;
 }
@@ -2304,8 +2365,8 @@ void paintBytesScalar(HDC dc)
     if (!has) {
         SelectObject(dc, uiFont(12, false, s.zh));
         RECT t { 0, s.byteTop + 40, s.clientW, s.byteTop + 64 };
-        drawCenteredText(dc, t, wideFromUtf8(s.zh ? "在表达式行粘贴字节，如 hex u16le 34 12 78 56"
-                                                 : "Paste bytes in the expression line, e.g. hex u16le 34 12 78 56"),
+        drawCenteredText(dc, t, wideFromUtf8(s.zh ? "输入 hex 字节流（deadbeefdeadbeef 也可），或 fmt <格式名> <hex...> 解码记录"
+                                                 : "Enter hex bytes (deadbeefdeadbeef works too), or fmt <name> <hex...> to decode records"),
                          kLabelText);
     }
     // word readout for the active byte
@@ -2332,7 +2393,7 @@ void paintBytesScalar(HDC dc)
         for (int i = 0; i < 3; ++i)
             drawBytesChip(dc, s.rcByteChip[i], i == 0 ? "HEX " : i == 1 ? "DEC " : "BIN ", "-", false);
     }
-    drawSegment(dc, s.rcToBits, wideFromUtf8(s.zh ? "→ 位运算" : "→ Bits"), false);
+    drawSegment(dc, s.rcToBits, wideFromUtf8(s.zh ? "送到位运算页" : "Send to Bits"), false);
     DeleteObject(mono);
     DeleteObject(monoB);
 }
@@ -2430,7 +2491,7 @@ void paintBytesRecords(HDC dc)
             drawLeftText(dc, t, wideFromUtf8(line), kPanelText);
         }
     }
-    drawSegment(dc, s.rcToBits, wideFromUtf8(s.zh ? "→ 位运算" : "→ Bits"), false);
+    drawSegment(dc, s.rcToBits, wideFromUtf8(s.zh ? "送到位运算页" : "Send to Bits"), false);
     DeleteObject(mono);
     DeleteObject(ui);
 }
@@ -2583,7 +2644,7 @@ void setScalarType(HWND hwnd, int width, int kind, bool endianBe)
     evaluateBytes();
 }
 
-// "→ 位运算": carry the active word into the bits page as `u<width> 0x…`.
+// "送到位运算页": carry the active word into the bits page as `u<width> 0x…`.
 void sendToBits(HWND hwnd)
 {
     EditorState& s = state();
@@ -3046,8 +3107,9 @@ void paint(HWND hwnd)
         DeleteObject(SelectObject(mem, old));
     }
     // Float-bar toggle: the free right end of the top bar, drawn as a pill so it
-    // reads as a switch rather than a sixth tab.
-    {
+    // reads as a switch rather than a sixth tab. Bits-page only: the bar row
+    // itself exists nowhere else, so the pill must not either.
+    if (bits) {
         const RECT r = s.rcBarToggle;
         HBRUSH pb = CreateSolidBrush(s.floatBar ? kAccent : kBitOff);
         HPEN pp = CreatePen(PS_SOLID, 1, s.floatBar ? kAccent : kSeparator);
@@ -3297,7 +3359,7 @@ void paint(HWND hwnd)
     } else {
         const std::string hint = s.mode == EditorSpec::Mode::Bytes
             ? (s.bytesIsRecords ? (s.zh ? "点击格子选中 · 滚轮翻页 · Shift+←→ 横向滚动" : "click selects · wheel pages · Shift+arrows scroll")
-                                : (s.zh ? "拖动选字节 · 点芯片复制 · → 位运算带过去" : "drag selects bytes · chips copy · → Bits hands off"))
+                                : (s.zh ? "拖动选字节 · 点芯片复制 · 送到位运算页做位级分析" : "drag selects bytes · chips copy · Send to Bits hands off"))
             : s.mode == EditorSpec::Mode::Struct
                 ? (s.zh ? "结构体交互随 v0.3c 提供" : "Interactive struct viewer arrives in v0.3c")
                 : s.mode == EditorSpec::Mode::Settings
@@ -3495,17 +3557,10 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 return 0;
             }
         }
-        if (inRect(s.rcBarToggle, x, y)) {
+        if (s.mode == EditorSpec::Mode::Bits && inRect(s.rcBarToggle, x, y)) {
             s.floatBar = !s.floatBar;
             s.hoverSeg = -1;
             winshun::debug(std::string("ra9fael.binarylab: setFloatBar ") + (s.floatBar ? "on" : "off"));
-            if (s.mode != EditorSpec::Mode::Bits) {
-                // Only the bits page has a bar row; say where it went instead of
-                // letting the pill change colour with no visible effect.
-                s.msg = s.floatBar ? (s.zh ? "条带已开 · 位模式页显示" : "bar on · see the Bits tab")
-                                   : (s.zh ? "条带已关" : "bar off");
-                s.msgTick = GetTickCount();
-            }
             relayout(hwnd); // the bar row is the only height this can change
             return 0;
         }
