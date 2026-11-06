@@ -7,7 +7,9 @@ Usage:
 
 What goes in: every file tracked by git (``git ls-files``), except paths that
 start with a dot (.github, .gitignore, ...), plus ``runtime.program`` from
-plugin.json (the built exe, which is not committed). The zip is deterministic
+plugin.json (the built exe, which is not committed) and BinaryLabApp.dll when
+it is built beside it (the QML workbench's starter loads it from its own
+folder; qmlapp/stub/main.cpp). The zip is deterministic
 (sorted names, fixed timestamps, stored, not compressed), so the same inputs
 always give the same sha256. plugin.json sits at the archive root, which is
 what WinShun's "install from archive" expects.
@@ -73,7 +75,8 @@ def main() -> int:
     if not (ROOT / program).is_file():
         return fail(f"{program} not found; build first (cmake -B build && cmake --build build)")
 
-    files = sorted(set(tracked_files()) | {program})
+    files = sorted({*tracked_files(), program}
+                   | ({"BinaryLabApp.dll"} if (ROOT / "BinaryLabApp.dll").is_file() else set()))
     if "plugin.json" not in files:
         return fail("plugin.json is not committed")
     missing = [f for f in files if not (ROOT / f).is_file()]
