@@ -11,6 +11,7 @@ CMakeFiles/
 # rebuilds it with CMake; see README. The QML prototype adds BinaryLabApp.dll
 # beside it (the same convention; the host's Qt runs it).
 binarylab.exe
+binarylab-*.exe
 BinaryLabApp.dll
 
 dist/
