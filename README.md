@@ -6,9 +6,10 @@
 > 英文说明放在 `README.en.md`，两份内容保持一致，可互相跳转。
 
 给嵌入式开发用的 Win顺 常驻插件：解析 `hex` / `bin` / `oct` 字符串、可视化位运算、
-计算 C 风格结构体布局。所有计算都是有界、纯内存的操作。结果行和 `preview.text`
-由宿主渲染；可选的**交互式位编辑器**只在被触发时打开自己的窗口，可点击置位、
-拖拽刷位，并以任意进制复制修改后的值。
+计算 C 风格结构体布局、按 hextract TOML 格式解码记录。所有计算都是有界、纯内存的
+操作。结果行和 `preview.text` 由宿主渲染；可选的**交互式工作台**只在被触发时打开
+自己的窗口：位页可点击置位、拖拽刷位，以任意进制复制修改后的值；字节流页可拖选
+字节、切换端序，或按记录格式逐字段查看解码结果。
 
 ## 安装
 
@@ -48,7 +49,7 @@ python tools/package.py                    # dist/ra9fael.binarylab-<version>.ws
 | 关键词 | 示例 | 作用 |
 |---|---|---|
 | `bits` | `bits u8 0xA5 & 0x0F` | HEX / BIN / OCT / DEC 行，`~ & \| ^ << >> rol ror`，字段 `get/set/clear/toggle`，悬停预览里的位网格 |
-| `bytes` | `bytes hex u16le 34 12 78 56` | 归一化字节流，按类型和字节序解码字，带偏移和 ASCII 的 hexdump，浮点数的 IEEE-754 拆解 |
+| `bytes` | `bytes hex u16le 34 12 78 56` | 归一化字节流，按类型和字节序解码字，带偏移和 ASCII 的 hexdump，浮点数的 IEEE-754 拆解；`bytes fmt` 按 hextract TOML 格式解码记录 |
 | `struct` | `struct pack=4 struct Frame { u8 sof; u32 seq; u16 len; u8 data[3]; };` | `sizeof` / `alignof`、成员偏移、padding 行、字节图、可复制的 `static_assert` 文本 |
 
 ### `bits` 语法
@@ -87,6 +88,60 @@ TYPE : u8 i8 u16[le|be] i16[le|be] u32[le|be] i32[le|be]
 `oct` token 必须在 `000..377` 之间。输入上限 16 KiB、解码后 4096 字节。
 末尾不完整的字会被如实报告，绝不编造一个值。
 
+### `bytes fmt` 语法
+
+```
+bytes fmt              列出记录格式（内置 + 设置目录里的 *.toml）
+bytes fmt <name> [lsb|msb] <hex...>
+```
+
+`name` 匹配 `[format].name`，重名时内置格式优先、目录文件按文件名排序后
+后者覆盖前者。`lsb` / `msb` 缺省用格式的 `byte_order`。数据是**纯 hex**：
+接受 `0x` 前缀和 `space , : ; _` 分隔符（不支持 `bin` / `oct`），奇数位报
+`E_HEX_ODD`，上限 4096 字节。解码按字（`word_bits` 位）切记录、字段按声明
+顺序做位切片（数组字段 `count` 份连续同型小端值），记录数上限 24 条、
+单条 4096 位。规则命中的记录行带底色标注，悬停明细写明命中了哪条规则。
+
+### 记录格式（hextract TOML）
+
+格式文件与 [hextract](https://github.com/ra9fael/hextract) 同一套 TOML schema，
+只有这里列出的键是合法的，未知键 / 类型错误按文件内行号报错，坏文件保留一条
+标红的错误行而不是拖垮整个列表：
+
+```toml
+[format]
+name = "blm_rawdata_256"        # bytes fmt 引用的名字
+description = "..."             # 可选
+word_bits = 256                 # 1..4096，一条记录的位宽
+byte_order = "lsb-first"        # lsb-first（默认）| msb-first，整条记录反转
+
+[[field]]
+name = "integral"               # 字段名，规则里用它引用
+type = "i16"                    # u8 i8 u16 i16 u32 i32 u64 i64（一律小端取值）
+count = 6                       # 可选：数组字段（≤256）
+bits = "5:2"                    # 可选：位切片（单数或 "hi:lo"），先解码完整标量再提取
+radix = "hex"                   # 可选：显示基数 hex | dec
+scale = 0.1                     # 可选：显示倍率（只影响显示，不影响规则）
+
+[[rule]]
+when = "any(v < 0 for v in integral)"   # 每条记录求值一次，第一条命中生效
+bg = "#f6caca"                  # 可选：命中底色
+fg = "#9a9a9a"                  # 可选：命中前景色
+```
+
+上面未列出的键不合法（`[[rule]]` 还接受可选的 `name`）。`when` 是 hextract 的
+表达式**子集**：字面量、`True`/`False`、字段名（数组字段是
+元组）、循环变量、`arr[i]`、一元 `+ - not ~`、`** * / // % + - << >> & ^ |`、
+链式比较 `== != < <= > >=`、`and` / `or`，以及 `any` / `all` / `min` / `max` /
+`abs` / `len` 和单生成器参数 `f(EXPR for v in ARR)`。整数运算遵循 Python 语义
+（精确整数、地板除、`%` 随除数符号）；属性、切片、字符串、未知名字一律在加载时
+拒绝。规则还有硬上限：每条 ≤256 个 AST 节点、嵌套 ≤32 层、每条记录求值 ≤4096 步。
+
+格式来源：内置 2 个 BLM 格式（`blm_rawdata_256`、`blm_interlock_512`），加上
+[设置](#设置)里 `formatDir` 目录下的 `*.toml`（按文件名排序，最多 64 个、
+每个 ≤64 KiB；子目录不递归）。这是插件唯一读文件的地方，由 `files:read` 权限
+声明。
+
 ### `struct` 语法
 
 ```
@@ -111,13 +166,15 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 
 | 命令 | Enter | Ctrl+Enter | Shift+Enter | 菜单（无按键） |
 |---|---|---|---|---|
-| `bits`（默认 `bitsEnter=copy`） | `copyPrimary` —— 复制该行主值 | `openEditor` —— 打开交互式位编辑器 | `chainQuery` —— 把后续查询填进输入框 | `copyDetail` —— 复制完整文本 |
+| `bits`（默认 `bitsEnter=copy`） | `copyPrimary` —— 复制该行主值 | `openEditor` —— 打开交互式工作台 | `chainQuery` —— 把后续查询填进输入框 | `copyDetail` —— 复制完整文本 |
 | `bits`（`bitsEnter=editor`） | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
-| `bytes` / `struct` | `copyPrimary`（struct 摘要会展开成员） | `copyDetail` | `chainQuery` | — |
+| `bytes` | `copyPrimary` | `openEditor` —— 打开字节流工作台 | `chainQuery` | `copyDetail` |
+| `struct` | `copyPrimary`（摘要会展开成员） | `copyDetail` | `chainQuery` | — |
 
-例外：结果栏**第一行**是专用的工作台入口，无论 `bitsEnter` 设成什么，Enter 都是
-`openEditor`、Ctrl+Enter 是 `copyPrimary`。只输入 `bits `（关键字后一个空格）时，
-第一行同样是这个入口，直接 Enter 即可进入空白工作台。
+例外：`bits` 与 `bytes` 结果栏**第一行**都是专用的工作台入口，无论
+`bitsEnter` 设成什么，Enter 都是 `openEditor`、Ctrl+Enter 是 `copyPrimary`。
+只输入 `bits `（关键字后一个空格）时第一行也是这个入口，直接 Enter 即可进入
+空白工作台；`bytes ` 不带参数仍只显示帮助示例行。
 
 在 `struct` 摘要行按 Enter 会通过 `effects.replace` 展开成每个成员 / padding
 各一行，而不是复制。
@@ -180,6 +237,30 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 （`valid: false`，Tab 可填充）；`bytes ` / `struct ` 不带参数仍只显示示例行。
 解析失败会显示一行 `valid: false`，带错误码和修正后的示例。
 
+### 字节流工作台（bytes 页）
+
+`bytes` 结果的第一行 Enter（或任意 `bytes` 行 Ctrl+Enter）打开。窗口顶栏的五个页签
+中 `bits` / `bytes` / `struct` 是内容模式，共用同一个表达式框——页签切换时各自
+保留自己的表达式文本，切换回来立即重新求值。字节页有两种形态：
+
+**标量模式**（`hex|bin|oct [TYPE] DATA...`）：左偏移、中十六进制（每行 16 字节）、
+右 ASCII 的三段网格。单击选中字节，拖拽扩展选区，方向键移动并自动滚动跟随，
+滚轮上下翻行、Shift+滚轮横向翻列。当前字按表达式的类型词（`u16` 等）和端序解码，
+HEX / DEC|FLOAT / BIN 三个 chip 显示该字的值并可点击复制；工具栏的位宽 / 符号
+按钮重写类型词，LE / BE 按钮重写 `le` / `be` 后缀（大端下 `34 12` 读出
+`0x7856`）。Ctrl+C 复制整个选区的连续 hex。
+
+**记录模式**（`fmt <name> [lsb|msb] <hex...>`）：顶行是格式下拉（内置 +
+设置目录里的全部格式，加载备注和坏文件错误也在这里展示），下方是记录表格：
+每条记录一行、每个字段一列（数组字段按元素展开，如 `integral0..integral5`），
+命中规则的行按规则着色（`bg` / `fg`），规则求值错误以红色文字标在该行。
+点击单元格选中记录 / 字段，chip 显示该字段的十进制 / 十六进制值；
+LSB / MSB 按钮重写表达式里的字节序词。滚轮翻记录，Shift+滚轮横向翻列。
+
+表达式行与位页同源：输入即求值，出错时保留上一次的有效结果并在状态栏给出
+完整错误；清空表达式即回到空白状态。「→ 位运算」把当前字的原始位（记录模式
+则是选中字段的原始位）交给位页继续分析。Esc 关闭窗口（下拉先收起）。
+
 ## 设置
 
 | 键 | 类型 | 默认值 | 含义 |
@@ -189,6 +270,7 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 | `defaultPack` | choice | `0` | 省略 `pack=N` 时 `struct` 的 pack |
 | `bitsEnter` | choice | `copy` | `bits` 行上复制 / 编辑器谁占用 Enter。`copy`（默认）= Enter 复制、Ctrl+Enter 打开编辑器；`editor` 反之。 |
 | `evalMode` | choice | `fixed` | 表达式求值模式。`fixed`（默认）每步结果固定在位宽内并报告回绕；`c` 按 C 语言整数提升、结果类型自动推导。显式类型前缀始终按固定宽度求值。 |
+| `formatDir` | folder | （空） | `bytes fmt` 读取此目录下的 `*.toml`（hextract 格式，只读，最多 64 个、每个 ≤64 KiB）；留空只用内置的两个 BLM 格式。`settingsChanged` 时重新扫描。 |
 | `floatBar` | choice | `off` | 工作台打开时是否展开浮点条带；窗口内的开关可随时切换，只影响本次窗口。 |
 
 设置在 `initialize` 时读取，并在 `settingsChanged` 时刷新；不涉及任何密钥。
@@ -196,37 +278,42 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 ## 权限与数据
 
 `runtime.sandbox` 为 `strict`。用 `wsbench` 实测：插件进程运行在
-**LOW 完整性级别、未提权、置于 job object 内**。自 0.2.0 起 manifest 声明两个
-权限，二者都只服务于交互式位编辑器：
+**LOW 完整性级别、未提权、置于 job object 内**。manifest 声明三个权限，
+分别只服务于编辑器窗口和记录格式目录：
 
 | 权限 | 原因 | 可否强制 |
 |---|---|---|
 | `ui` | 编辑器窗口（仅在用户触发 `openEditor` 动作时创建）。 | 部分 —— 没有它，job 会阻止 desktop / USER 句柄，窗口根本无法存在。 |
 | `clipboard:write` | 编辑器的复制按钮直接写入修改后的值。协议没有插件→宿主的复制工具，所以窗口内部拿不到宿主代劳的 `copy` 效果。 | 是。 |
+| `files:read` | 只读 `formatDir` 设置所选目录下的 `*.toml`（记录格式，见 [记录格式](#记录格式hextract-toml)）；不递归子目录、不读其他任何路径、不写盘。 | 是（主机按目录把关）。 |
 
-纯文本用法两者都不需要：查询和其余动作保持零副作用（不碰文件、剪贴板、窗口）。
-未声明 `network`、`files:*`、`clipboard:read`、`processes`、`notifications`、
-`elevated`、`contentSearch`、`ai.expose`、`hostHotkeys` 能力。
+纯文本用法不需要任何一个权限：查询和其余动作保持零副作用（不碰文件、剪贴板、
+窗口）。未声明 `network`、`files:write`、`clipboard:read`、`processes`、
+`notifications`、`elevated`、`contentSearch`、`ai.expose`、`hostHotkeys` 能力。
 
-插件不写磁盘，也不使用 `WS_DATA_DIR`。若以后加入预设，应放在 `WS_DATA_DIR`
-并采用原子写入。密钥必须使用宿主的 `password` 设置类型；这里没有用到。
-不上传任何用户数据：没有任何网络调用。
+插件除读取 `formatDir` 下的 TOML 外不写磁盘，也不使用 `WS_DATA_DIR`
+（历史写到宿主提供的 `dataDir`）。密钥必须使用宿主的 `password` 设置类型；
+这里没有用到。不上传任何用户数据：没有任何网络调用。
 
 ## 构建与运行时依赖
 
 - Windows，支持 C++ 常驻插件协议的 Win顺（JSON-RPC 2.0，stdio 上每行一条 UTF-8 消息）。
 - C++17 编译器。MSVC（静态 CRT，`/utf-8`）或 MinGW-w64（静态 `-static` 链接）均可。
-  不用 Qt、不用第三方库、不需要运行时 DLL。
+  不用 Qt、不需要运行时 DLL。唯一的第三方代码是随仓库 vendor 的
+  [toml++](https://github.com/marzer/tomlplusplus) v3.4.0（MIT，单头
+  `third_party/tomlplusplus/toml.hpp`，以 `TOML_EXCEPTIONS=0` 编译并以 SYSTEM
+  include 引入），用于解析记录格式 TOML。
 - `winshun.h` 从 `WinShun/src/plugins-sdk/winshun.h` 逐字节复制，插件因此自包含。
 - 构建产物直接输出到本目录，因为 `plugin.json` 把 `binarylab.exe` 指定为
   `runtime.program`。构建命令见 [从源码构建](#从源码构建)。
 
 ## 验证
 
-完整矩阵和实测结果见 [TESTPLAN.md](TESTPLAN.md)。摘要：215/215 条纯逻辑断言通过
-（含 GCC `#pragma pack` 的 `sizeof` / `alignof` / `offsetof` 参照值），构建出的插件
-还用 `wsbench` 通过真实 `WinShunPluginHost.exe` runner 跑过三条命令、空输入、
-非法输入、设置覆盖和全部三种动作。
+完整矩阵和实测结果见 [TESTPLAN.md](TESTPLAN.md)。摘要：**378/378** 条纯逻辑断言通过
+（含 GCC `#pragma pack` 的 `sizeof` / `alignof` / `offsetof` 参照值和记录格式 /
+TOML 加载用例），交互工作台的位页与字节页由
+[workbench_drive.py](tools/verify/workbench_drive.py) 通过 JSON-RPC 实机驱动，
+逐项断言布局、点击、拖选、快捷键与剪贴板内容（`ALL CHECKS PASSED`）。
 
 **尚未验证**：Win顺 GUI 的消息日志和悬停面板、`preview.text` 的等宽对齐、
 键盘手感，以及把打包好的 `.wsplugin` 导入全新配置。

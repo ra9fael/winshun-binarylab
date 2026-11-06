@@ -244,6 +244,54 @@ caveat as L4).
   `i32 @0xBFC00000` with DEC -1077936128; `kind2` gives `f32 0xBFC00000` and
   FLOAT -1.5. Screenshot `workbench_float_toolbar.png` checked by eye.
 
+## L10 — Record formats: model, rules and TOML loading (2026-11-06, measured)
+
+- `tests/test_logic.cpp`: **378/378** assertions (270 previous + 108 new).
+  New blocks cover: `builtinRawFormats` inventory (2 formats, word widths,
+  byte order, 3 rules each, `entryFor` lookup); format set semantics
+  (`addFormat` same-name overwrite with a note, `builtinFormatSet` copy);
+  strict hex parsing (separators `space , : ; _`, `0x` prefixes, odd-digit
+  `E_HEX_ODD`, 4096-byte cap); `decodeRecords` record cutting per
+  `word_bits`, little-endian field slicing, array expansion, lsb/msb
+  whole-record reversal, trailing-bit reporting, 24-record / 4096-bit caps;
+  the restricted rule evaluator (arithmetic/comparison/logic operators,
+  `any`/`all`/`min`/`max`/`abs`/`len`, generator loops, chained comparisons,
+  Python floor-division and modulo semantics, rejection of attributes,
+  slices, strings and unknown names at load, AST node / depth / step caps).
+- TOML loading (`formats_toml.h`, vendored toml++ v3.4.0 compiled with
+  `TOML_EXCEPTIONS=0`): the two hextract fixtures parse and decode
+  identically to the built-in definitions; unknown keys, wrong types and
+  missing `name` / `word_bits` fail with the file's line number in the
+  message; a broken file degrades to one red error entry and the rest of the
+  directory still loads; `loadFormatDir` is sorted, non-recursive, capped at
+  64 files of 64 KiB, and built-ins win name clashes.
+- JSON-RPC smoke over the real pipe: `bytes fmt` (list), `bytes fmt
+  blm_rawdata_256 <hex>` (decode with a rule hit) and an unknown format name
+  (clear error row) all behave as documented.
+
+## L11 — Byte workbench page (2026-11-06, measured)
+
+`workbench_drive.py` section 8 drives the real window; full run
+`ALL CHECKS PASSED`, exit 0:
+
+| Check | Result |
+|---|---|
+| `bytes hex u16 34 12 78 56` first row is `bytes.open.workbench` with `data.expression` preserved; Enter opens the bytes tab (scalar) | Pass |
+| Expression line keeps the scalar text; click on a byte selects it (layout logs `selBegin`); HEX chip copies the active word (`0x5678`) | Pass |
+| BE button rewrites the `le`/`be` suffix and `34 12` reads `0x7856` | Pass |
+| Drag across bytes 1..2 extends the selection (`selBegin`/`selEnd`) | Pass |
+| `→ Bits` hands the active word to the bits page (mode 0, `u16 0x5678`) | Pass |
+| `bytes fmt blm_rawdata_256 lsb <hex>` opens the records mode (`bytesMode=records`); format dropdown lists the built-ins plus the fixture folder formats | Pass |
+| Click on the `integral0` cell selects record/field (`selField`); cell chip shows the field value | Pass |
+| MSB button rewrites the order token in the expression and logs `setOrder` | Pass |
+| Screenshots `bytes_scalar.png`, `bytes_records.png`, `bytes_formats.png` checked by eye | Pass |
+| `cmake --build build` + `ctest --test-dir build` | Pass (378/378) |
+
+Caveats carried over from L6: the drive harness runs the exe directly over
+JSON-RPC, not inside the host's LOW-integrity job, and PostMessage cannot set
+`GetKeyState(VK_CONTROL)`, so the Ctrl+C selection copy is exercised manually
+rather than by the script.
+
 ## Honest notes / corrections
 
 - The earlier design example said `bytes oct 377 040 000 -> FF 40 00`. That

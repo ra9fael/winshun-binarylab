@@ -181,9 +181,29 @@
   value, integer <-> float keeps the bits. A plain decimal under a float
   prefix is now a value (`f32 88` = 88.0); raw patterns need a base prefix or
   `@`. Status-bar messages are no longer clipped.
-- **v0.3b (CRC kernel + bytes workbench + `crc`/`parity` commands) remains
-  deferred.** This round and v0.3a3/a4 took priority because they were
-  reported by the user while using the workbench.
+- **v0.3b bytes page + record formats — implemented (2026-11-06).** The bytes
+  tab is no longer a placeholder. Scalar mode (`hex|bin|oct [type] data`) is an
+  offset / hex / ASCII grid with click/drag/arrow/wheel selection, active-word
+  chips (HEX / DEC|FLOAT / BIN), a width / signedness toolbar and LE / BE
+  buttons that rewrite the expression, Ctrl+C selection copy, and a "→ Bits"
+  handoff of the active word's raw bits. Record decoding arrives with
+  `bytes fmt`: hextract's TOML schema (vendored toml++ v3.4.0, exception-free,
+  SYSTEM include) parsed by a schema-checked reader with file line numbers,
+  two built-in BLM formats, and user formats loaded read-only from the new
+  `formatDir` folder setting behind a `files:read` permission (up to 64 files
+  of 64 KiB, non-recursive, built-ins win name clashes). Rule `when`
+  expressions run on a restricted evaluator with hard caps (256 nodes, depth
+  32, 4096 steps per record; Python integer semantics; attributes, slices,
+  strings and unknown names rejected at load). The records mode shows a
+  format dropdown, a records table (arrays expanded per element), rule-tinted
+  rows, a record / field value chip and LSB / MSB buttons that rewrite the
+  byte-order token. The bytes first result row is a dedicated workbench entry,
+  mirroring `bits `. Verification: 378/378 logic assertions and a
+  `workbench_drive.py` section 8 covering scalar open, click/drag selection,
+  chip copy, endian rewrite, the bits handoff and the full records flow,
+  `ALL CHECKS PASSED`.
+- **Still deferred in v0.3b:** the CRC kernel, the `crc` / `parity` commands,
+  the bytes-page checksum panel, and struct-mode member editing (v0.3c).
 
 The two versions are deliberately separated. v1 keeps `permissions: []`; v2 is
 the point at which a real permission review is required, and it must not raise

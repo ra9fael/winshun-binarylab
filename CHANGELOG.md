@@ -39,6 +39,25 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   `unsigned u | signed i | float f`; in float mode the width buttons read
   `f16 / f32 / f64` (8 disabled). Containers switch by re-encoding the value,
   integer <-> float switches keep the bits.
+- Byte workbench page (the second content tab): a scalar mode with an
+  offset / hex / ASCII grid — click, drag, arrow keys and wheel select bytes
+  with scroll following; the active word decodes per the expression's type
+  token and endianness into HEX / DEC|FLOAT / BIN chips; toolbar and LE / BE
+  buttons rewrite the type token and the `le` / `be` suffix; Ctrl+C copies the
+  selection as contiguous hex; "→ Bits" hands the active word to the bits page.
+- `bytes fmt` record decoding: `bytes fmt` lists formats and
+  `bytes fmt <name> [lsb|msb] <hex...>` decodes hextract TOML formats —
+  records cut per `word_bits`, fields bit-sliced in declaration order
+  (arrays expanded per element), rule hits tinted. Two BLM formats are built
+  in (`blm_rawdata_256`, `blm_interlock_512`); more load from the new
+  `formatDir` folder setting (up to 64 `*.toml` files, read-only, behind the
+  new `files:read` permission) via the vendored toml++ v3.4.0 with a
+  schema-checked reader that reports file line numbers. A restricted
+  expression evaluator runs the rule `when` subset with hard caps
+  (256 AST nodes, depth 32, 4096 steps per record).
+- Records mode in the byte workbench: format dropdown, records table with
+  column layout, record / field selection with a value chip, LSB / MSB order
+  buttons that rewrite the expression, Shift+wheel horizontal column scroll.
 
 ### Changed
 - **Behaviour change:** a plain decimal under a float prefix is encoded as a

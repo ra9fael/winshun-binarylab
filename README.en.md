@@ -7,11 +7,13 @@
 > The two are kept in sync and link to each other.
 
 A WinShun resident plugin for embedded work: parse `hex` / `bin` / `oct` strings,
-visualize bit operations, and compute C-like struct layout. Everything is a
-bounded, pure in-memory computation. The result rows and `preview.text` are
-rendered by the host, and the optional **interactive bit editor** opens its own
-window (only when you trigger it) so you can click bits, drag-paint, and copy
-the edited value in any base.
+visualize bit operations, compute C-like struct layout, and decode records from
+hextract TOML formats. Everything is a bounded, pure in-memory computation. The
+result rows and `preview.text` are rendered by the host, and the optional
+**interactive workbench** opens its own window (only when you trigger it): the
+bits page lets you click bits, drag-paint, and copy the edited value in any
+base; the bytes page lets you select bytes, switch endianness, or walk decoded
+records field by field.
 
 ## Install
 
@@ -57,7 +59,7 @@ release process, see [CONTRIBUTING.md](CONTRIBUTING.md).
 | Keyword | Example | What it does |
 |---|---|---|
 | `bits` | `bits u8 0xA5 & 0x0F` | HEX / BIN / OCT / DEC rows, `~ & \| ^ << >> rol ror`, field `get/set/clear/toggle`, bit grid in the hover preview |
-| `bytes` | `bytes hex u16le 34 12 78 56` | Normalize a byte stream, decode words by type and endianness, hexdump with offset and ASCII, IEEE-754 breakdown for floats |
+| `bytes` | `bytes hex u16le 34 12 78 56` | Normalize a byte stream, decode words by type and endianness, hexdump with offset and ASCII, IEEE-754 breakdown for floats; `bytes fmt` decodes records from a hextract TOML format |
 | `struct` | `struct pack=4 struct Frame { u8 sof; u32 seq; u16 len; u8 data[3]; };` | `sizeof` / `alignof`, member offsets, padding rows, a byte map, and copyable `static_assert` text |
 
 ### `bits` syntax
@@ -103,6 +105,68 @@ even number of digits, a `bin` token exactly 8 bits, an `oct` token `000..377`.
 Input is capped at 16 KiB and 4096 decoded bytes. A trailing incomplete word is
 reported as such and is never given a fabricated value.
 
+### `bytes fmt` syntax
+
+```
+bytes fmt              list record formats (built-ins + *.toml from the settings folder)
+bytes fmt <name> [lsb|msb] <hex...>
+```
+
+`name` matches `[format].name`; on a name clash the built-ins win and folder
+files loaded later in filename order override earlier ones. `lsb` / `msb`
+defaults to the format's `byte_order`. The data is **hex-only**: `0x` prefixes
+and `space , : ; _` separators are accepted (no `bin` / `oct`), odd digit
+counts give `E_HEX_ODD`, and the cap is 4096 bytes. Records are cut per word
+(`word_bits` bits) and fields are bit-sliced in declaration order (an array
+field is `count` consecutive same-type little-endian values); up to 24 records
+of 4096 bits each. Rows hit by a rule are tinted and the hover detail names
+the rule that fired.
+
+### Record formats (hextract TOML)
+
+Format files share hextract's TOML schema. Only the keys listed below are
+legal; unknown keys and type errors are reported with the line number inside
+the file, and a broken file keeps a red error entry instead of dragging down
+the whole list:
+
+```toml
+[format]
+name = "blm_rawdata_256"        # the name bytes fmt refers to
+description = "..."             # optional
+word_bits = 256                 # 1..4096, bits per record
+byte_order = "lsb-first"        # lsb-first (default) | msb-first, whole record
+
+[[field]]
+name = "integral"               # referenced by this name inside rules
+type = "i16"                    # u8 i8 u16 i16 u32 i32 u64 i64 (always little-endian)
+count = 6                       # optional: array field (<= 256)
+bits = "5:2"                    # optional: bit slice (single or "hi:lo"); the full scalar is decoded first
+radix = "hex"                   # optional: display base hex | dec
+scale = 0.1                     # optional: display multiplier (display only, rules see raw)
+
+[[rule]]
+when = "any(v < 0 for v in integral)"   # evaluated per record, first hit wins
+bg = "#f6caca"                  # optional: background on hit
+fg = "#9a9a9a"                  # optional: foreground on hit
+```
+
+Keys not listed above are illegal (`[[rule]]` also accepts an optional `name`).
+`when` is a **subset** of hextract's expression language: literals, `True` /
+`False`, field names (an array field is a tuple), loop variables, `arr[i]`,
+unary `+ - not ~`, `** * / // % + - << >> & ^ |`, chained comparisons
+`== != < <= > >=`, `and` / `or`, plus `any` / `all` / `min` / `max` / `abs` /
+`len` and a single generator argument `f(EXPR for v in ARR)`. Integer math
+follows Python semantics (exact integers, floor division, `%` following the
+divisor's sign); attributes, slices, strings and unknown names are rejected at
+load time. Rules also carry hard caps: <= 256 AST nodes and depth <= 32 per
+rule, <= 4096 evaluation steps per rule per record.
+
+Format sources: 2 built-in BLM formats (`blm_rawdata_256`,
+`blm_interlock_512`) plus the `*.toml` files in the `formatDir` settings
+folder (filename order, up to 64 files of 64 KiB each; subfolders are not
+scanned). This is the only place the plugin reads files, declared through the
+`files:read` permission.
+
 ### `struct` syntax
 
 ```
@@ -129,14 +193,16 @@ host's action menu. The split is chosen by the `bitsEnter` setting.
 
 | Command | Enter | Ctrl+Enter | Shift+Enter | Menu (no key) |
 |---|---|---|---|---|
-| `bits` (default `bitsEnter=copy`) | `copyPrimary` — copy the row's main value | `openEditor` — open the interactive bit editor | `chainQuery` — fill the input box with a follow-up | `copyDetail` — copy full text |
+| `bits` (default `bitsEnter=copy`) | `copyPrimary` — copy the row's main value | `openEditor` — open the interactive workbench | `chainQuery` — fill the input box with a follow-up | `copyDetail` — copy full text |
 | `bits` (`bitsEnter=editor`) | `openEditor` | `copyPrimary` | `chainQuery` | `copyDetail` |
-| `bytes` / `struct` | `copyPrimary` (struct summary expands members) | `copyDetail` | `chainQuery` | — |
+| `bytes` | `copyPrimary` | `openEditor` — open the byte workbench | `chainQuery` | `copyDetail` |
+| `struct` | `copyPrimary` (the summary expands members) | `copyDetail` | `chainQuery` | — |
 
-Exception: the **first result row** is a dedicated workbench entry. Regardless
-of `bitsEnter`, its Enter is `openEditor` and Ctrl+Enter is `copyPrimary`.
-Typing just `bits ` (keyword plus a space) produces the same first row, so
-Enter opens a blank workbench immediately.
+Exception: the **first result row** of both `bits` and `bytes` is a dedicated
+workbench entry. Regardless of `bitsEnter`, its Enter is `openEditor` and
+Ctrl+Enter is `copyPrimary`. With `bits ` alone (keyword plus a space) that
+same first row appears, so Enter opens a blank workbench immediately;
+`bytes ` with no arguments still shows only the help examples.
 
 On a `struct` summary row Enter expands into one row per member/padding via
 `effects.replace` instead of copying.
@@ -249,6 +315,39 @@ followed by three example rows (`valid: false`, Tab fills the example).
 `bytes ` / `struct ` with no arguments still show only the examples. A parse
 failure shows one `valid: false` row with an error code and a corrected example.
 
+### Byte workbench (bytes page)
+
+Enter on the first `bytes` row (or Ctrl+Enter on any `bytes` row) opens it.
+Of the five top-bar tabs, `bits` / `bytes` / `struct` are content modes that
+share one expression box — each mode keeps its own text across tab switches
+and re-evaluates when it comes back. The bytes page has two shapes:
+
+**Scalar mode** (`hex|bin|oct [TYPE] DATA...`): a three-band grid — offsets on
+the left, 16 hex bytes per row in the middle, ASCII on the right. Click
+selects a byte, dragging extends the selection, arrow keys move with scroll
+following, the wheel scrolls rows and Shift+wheel scrolls columns. The active
+word is decoded per the expression's type token (`u16` and so on) and
+endianness; HEX / DEC|FLOAT / BIN chips show and copy that word's value. The
+toolbar width / signedness buttons rewrite the type token, and LE / BE rewrite
+the `le` / `be` suffix (`34 12` reads `0x7856` in big-endian). Ctrl+C copies
+the whole selection as contiguous hex.
+
+**Records mode** (`fmt <name> [lsb|msb] <hex...>`): the top strip holds the
+format dropdown (built-ins plus every format from the settings folder; load
+notes and broken-file errors surface there too), below it the records table:
+one row per record, one column per field (array fields expand per element,
+e.g. `integral0..integral5`), tinted by the first matching rule (`bg` / `fg`);
+a rule evaluation error is marked in red on its row. Clicking a cell selects
+record / field and the chip shows that field's decimal / hex value; the
+LSB / MSB buttons rewrite the byte-order token in the expression. The wheel
+scrolls records, Shift+wheel scrolls columns.
+
+The expression line works like the bits page: it evaluates as you type, keeps
+the last good result on error, shows the full error in the status bar, and a
+cleared box is a blank state. "→ Bits" hands the active word's raw bits (or
+the selected field's, in records mode) to the bits page. Esc closes the window
+(closing the dropdown first).
+
 ## Settings
 
 | Key | Type | Default | Meaning |
@@ -258,6 +357,7 @@ failure shows one `valid: false` row with an error code and a corrected example.
 | `defaultPack` | choice | `0` | `pack` for `struct` when `pack=N` is omitted |
 | `bitsEnter` | choice | `copy` | Which of copy / editor takes Enter on `bits` rows. `copy` (default) = Enter copies, Ctrl+Enter opens the editor; `editor` swaps them. |
 | `evalMode` | choice | `fixed` | Expression evaluation mode. `fixed` (default) keeps every step inside the width and reports wrapping; `c` applies C integer promotions and derives the result type. An explicit type prefix always evaluates fixed. |
+| `formatDir` | folder | (empty) | `bytes fmt` reads `*.toml` from this folder (hextract format, read-only, up to 64 files of 64 KiB each); leave empty to use the two built-in BLM formats. Rescanned on `settingsChanged`. |
 | `floatBar` | choice | `off` | Whether the workbench opens with the float bar shown; the in-window pill toggles it for that window only. |
 
 Settings are read from `initialize` and refreshed on `settingsChanged`; no
@@ -266,31 +366,36 @@ secrets are involved.
 ## Permissions and data
 
 `runtime.sandbox` is `strict`. Measured with `wsbench`: the plugin process runs
-at **LOW integrity, not elevated, inside a job object**. Since 0.2.0 the
-manifest declares two permissions, both required by the interactive bit editor
+at **LOW integrity, not elevated, inside a job object**. The manifest declares
+three permissions, each serving the editor window or the record-format folder
 and nothing else:
 
 | Permission | Why | Enforceable? |
 |---|---|---|
 | `ui` | The editor window (created only when the user triggers the `openEditor` action). | Partially — without it the job blocks desktop/USER handles, so the window could not exist. |
 | `clipboard:write` | The editor's copy button writes the edited value directly. The protocol has no plugin→host copy tool, so a host-mediated `copy` effect is not available from inside a window. | Yes. |
+| `files:read` | Read-only access to the `*.toml` files in the folder picked by the `formatDir` setting (record formats, see [Record formats](#record-formats-hextract-toml)); no recursion into subfolders, no other paths, no writes. | Yes (the host polices the folder). |
 
-Text-only use needs neither: queries and all other actions keep zero side
-effects (no files, no clipboard, no window). No `network`, `files:*`,
+Text-only use needs none of them: queries and all other actions keep zero side
+effects (no files, no clipboard, no window). No `network`, `files:write`,
 `clipboard:read`, `processes`, `notifications`, `elevated`, `contentSearch`,
 `ai.expose` or `hostHotkeys` capability is declared.
 
-The plugin writes nothing to disk and does not use `WS_DATA_DIR`. If presets
-are added later, they belong in `WS_DATA_DIR` with atomic writes. Secrets must
-use the host's `password` setting type; none are used here. No user data is
-uploaded or sent anywhere: there are no network calls.
+Apart from reading TOML files from `formatDir` the plugin writes nothing to
+disk and does not use `WS_DATA_DIR` (history goes to the host-provided
+`dataDir`). Secrets must use the host's `password` setting type; none are used
+here. No user data is uploaded or sent anywhere: there are no network calls.
 
 ## Build and runtime dependencies
 
 - Windows, WinShun with the C++ resident-plugin protocol (JSON-RPC 2.0, one
   UTF-8 message per line on stdio).
 - A C++17 compiler. MSVC (static CRT, `/utf-8`) or MinGW-w64 (static
-  `-static` link) both work. No Qt, no third-party libraries, no runtime DLL.
+  `-static` link) both work. No Qt, no runtime DLL. The only third-party code
+  is the vendored [toml++](https://github.com/marzer/tomlplusplus) v3.4.0
+  (MIT, single header `third_party/tomlplusplus/toml.hpp`, compiled with
+  `TOML_EXCEPTIONS=0` and included as a SYSTEM include), used to parse the
+  record-format TOML.
 - `winshun.h` is copied byte-for-byte from `WinShun/src/plugins-sdk/winshun.h`
   so the plugin is self-contained.
 - Build output goes straight into this folder because `plugin.json` names
@@ -299,11 +404,12 @@ uploaded or sent anywhere: there are no network calls.
 ## Verification
 
 See [TESTPLAN.md](TESTPLAN.md) for the full matrix and the measured results.
-Summary: 215/215 pure-logic assertions pass (including GCC `#pragma pack`
-`sizeof` / `alignof` / `offsetof` oracles), and the built plugin was driven
-through the real `WinShunPluginHost.exe` runner with `wsbench` for all three
-commands, empty input, invalid input, settings overrides and all three
-actions.
+Summary: **378/378** pure-logic assertions pass (including GCC `#pragma pack`
+`sizeof` / `alignof` / `offsetof` oracles and the record-format / TOML
+loading cases), and the workbench bits and bytes pages are driven end to end
+by [workbench_drive.py](tools/verify/workbench_drive.py) over JSON-RPC,
+asserting layout, clicks, drag selection, shortcuts and clipboard contents
+(`ALL CHECKS PASSED`).
 
 What has **not** been verified: the actual WinShun GUI message log and hover
 panel, monospace alignment of `preview.text`, keyboard feel, and importing a packaged `.wsplugin` into a fresh profile.
