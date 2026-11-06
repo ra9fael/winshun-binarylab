@@ -142,7 +142,7 @@ struct EditorState {
     int cellW = 40;            // adaptive: the 8 columns fill the client width
     int toolTop = 0;           // width / signedness toolbar row (bits mode)
     RECT rcWidthBtn[4] = {};   // 8 | 16 | 32 | 64
-    RECT rcSignBtn[2] = {};    // unsigned | signed
+    RECT rcKindBtn[3] = {};    // unsigned u | signed i | float f
     RECT rcParity[4] = {};     // status row 2: labelled parity chips
     int hoverParity = -1;      // chip under the cursor, for the definition tip
     RECT rcBarToggle = {};     // top bar right end: show / hide the float bar
@@ -496,6 +496,20 @@ const char* tabLabel(int i, bool zh)
     return zh ? kZh[i] : kEn[i];
 }
 
+// The type row: integer signedness and the float reading share one segment,
+// because a result is exactly one of the three at a time.
+const char* kindLabel(bool zh)
+{
+    return zh ? "类型" : "Type";
+}
+
+const char* kindName(int i, bool zh)
+{
+    static const char* const kZh[3] = { "无符号 u", "有符号 i", "浮点 f" };
+    static const char* const kEn[3] = { "unsigned u", "signed i", "float f" };
+    return zh ? kZh[i] : kEn[i];
+}
+
 // One sentence per chip, shown on hover and in the help tab. Keep the two
 // concepts apart: parity (odd/even of the count) and the bit to append.
 std::string parityDefinition(int i, bool zh)
@@ -732,18 +746,21 @@ void computeLayout(HDC dc)
     // Toolbar segment widths (measured, so zh/en both fit).
     HFONT toolFont = uiFont(12, false, s.zh);
     const std::wstring toolWidthLabel = wideFromUtf8(s.zh ? "位宽" : "Width");
-    const std::wstring toolSignLabel = wideFromUtf8(s.zh ? "符号" : "Sign");
-    const std::wstring signNames[2] = { wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"),
-                                        wideFromUtf8(s.zh ? "有符号 i" : "signed i") };
+    const std::wstring toolSignLabel = wideFromUtf8(kindLabel(s.zh));
     const int widthLabelW = textWidth(dc, toolFont, toolWidthLabel) + 10;
     const int signLabelW = textWidth(dc, toolFont, toolSignLabel) + 10;
-    const int widthBtnW = std::max(36, textWidth(dc, toolFont, L"64") + 20);
-    int signBtnW[2];
-    for (int i = 0; i < 2; ++i)
-        signBtnW[i] = textWidth(dc, toolFont, signNames[i]) + 20;
+    // Wide enough for the float names the same buttons show in float mode.
+    const int widthBtnW = std::max(36, textWidth(dc, toolFont, L"f64") + 16);
+    int signBtnW[3];
+    for (int i = 0; i < 3; ++i)
+        signBtnW[i] = textWidth(dc, toolFont, wideFromUtf8(kindName(i, s.zh))) + 16;
     DeleteObject(toolFont);
+    const int toolbarW = kGridMargin + widthLabelW + 4 * widthBtnW + 20 + signLabelW
+                       + signBtnW[0] + signBtnW[1] + signBtnW[2] + kGridMargin;
 
     int clientW = std::max(480, 2 * kGridMargin + 8 * kMinCellW + kNibbleGap);
+    if (bits)
+        clientW = std::max(clientW, toolbarW);
     if (!chips.empty()) {
         if (oneRow + 24 <= 616)
             clientW = std::max(clientW, oneRow + 24);
@@ -793,8 +810,8 @@ void computeLayout(HDC dc)
             tx += widthBtnW;
         }
         tx += 20 + signLabelW;
-        for (int i = 0; i < 2; ++i) {
-            s.rcSignBtn[i] = { tx, s.toolTop, tx + signBtnW[i], s.toolTop + kToolH };
+        for (int i = 0; i < 3; ++i) {
+            s.rcKindBtn[i] = { tx, s.toolTop, tx + signBtnW[i], s.toolTop + kToolH };
             tx += signBtnW[i];
         }
         contentTop = s.toolTop + kToolH + 8;
@@ -802,7 +819,7 @@ void computeLayout(HDC dc)
         s.toolTop = 0;
         for (RECT& r : s.rcWidthBtn)
             r = {};
-        for (RECT& r : s.rcSignBtn)
+        for (RECT& r : s.rcKindBtn)
             r = {};
     }
     s.gridTop = contentTop + kLabelH;
@@ -943,7 +960,9 @@ void logLayout()
             line += " chip" + std::to_string(i) + "=" + rectStr(s.rcChip[i]);
         line += " w8=" + rectStr(s.rcWidthBtn[0])
               + " w64=" + rectStr(s.rcWidthBtn[3])
-              + " sgn1=" + rectStr(s.rcSignBtn[1]);
+              + " sgn1=" + rectStr(s.rcKindBtn[1])
+              + " kind0=" + rectStr(s.rcKindBtn[0])
+              + " kind2=" + rectStr(s.rcKindBtn[2]);
         for (int i = 0; i < 4; ++i)
             line += " parity" + std::to_string(i) + "=" + rectStr(s.rcParity[i]);
         for (int i = 0; i < 3; ++i)
@@ -1121,6 +1140,28 @@ void copyBarSegment(HWND hwnd, int segment)
 }
 
 void evaluate(); // defined below; commit/history helpers force a re-run
+void setKind(HWND hwnd, int kind);
+
+void showMsg(HWND hwnd, const std::string& text)
+{
+    EditorState& s = state();
+    s.msg = text;
+    s.msgTick = GetTickCount();
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+// Replace the whole expression line; EN_CHANGE re-evaluates it, which in turn
+// adopts the width and float flag of the new prefix and relays the window out.
+void replaceExpression(const std::string& text)
+{
+    EditorState& s = state();
+    if (!s.edit)
+        return;
+    const std::wstring w = wideFromUtf8(text);
+    SetWindowTextW(s.edit, w.c_str());
+    SendMessageW(s.edit, 0x00B1 /* EM_SETSEL */, static_cast<WPARAM>(w.size()),
+                 static_cast<LPARAM>(w.size()));
+}
 
 std::string expressionText()
 {
@@ -1262,14 +1303,28 @@ void setType(HWND hwnd, int width, bool isSigned)
     EditorState& s = state();
     if (width == s.width && isSigned == s.isSigned)
         return;
-    // The width of a float result is fixed by its IEEE-754 container. The
-    // toolbar cannot switch containers without re-encoding, so point at the
-    // expression prefix instead of silently truncating the bit pattern.
     if (s.isFloat) {
-        s.msg = s.zh ? "浮点位模式请用 " + binlab::floatNameList() + " 前缀切换"
-                     : "use a " + binlab::floatNameList() + " prefix to change float width";
-        s.msgTick = GetTickCount();
-        InvalidateRect(hwnd, nullptr, TRUE);
+        if (isSigned != s.isSigned) {
+            setKind(hwnd, isSigned ? 1 : 0);
+            return;
+        }
+        // Between containers the *value* is what the user is looking at, so
+        // it is re-encoded: the shortest round-trip text of the old pattern
+        // becomes the literal under the new prefix (f32 1.5 -> f64 1.5).
+        // Rounding and range loss land in the detail like any other literal.
+        const binlab::FloatSpec* to = binlab::floatByBits(width);
+        if (to == nullptr) {
+            showMsg(hwnd, s.zh ? std::to_string(width) + " 位没有 IEEE-754 容器"
+                               : std::to_string(width) + "-bit has no IEEE-754 container");
+            return;
+        }
+        std::string text = s.floatText;
+        if (text == "+Inf")
+            text = "Inf";
+        replaceExpression(std::string(to->name) + " " + text);
+        showMsg(hwnd, s.zh ? std::string("按数值重编码为 ") + to->name
+                           : std::string("re-encoded as ") + to->name);
+        winshun::debug(std::string("ra9fael.binarylab: setType ") + to->name);
         return;
     }
     std::uint64_t v = s.value & binlab::maskFor(s.width);
@@ -1303,6 +1358,41 @@ void setType(HWND hwnd, int width, bool isSigned)
     }
     winshun::debug("ra9fael.binarylab: setType " + binlab::typeNameFor(width, isSigned));
     relayout(hwnd);
+}
+
+// Integer <-> float keeps the bits and changes only how they are read, the
+// same reading the float bar offers as a ghost. Between containers setType()
+// re-encodes the value instead. kind: 0 = unsigned, 1 = signed, 2 = float.
+void setKind(HWND hwnd, int kind)
+{
+    EditorState& s = state();
+    const int current = s.isFloat ? 2 : (s.isSigned ? 1 : 0);
+    if (kind == current)
+        return;
+    if (kind < 2 && !s.isFloat) {
+        setType(hwnd, s.width, kind == 1);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return;
+    }
+    const std::string hex = binlab::hexUpper(s.value & binlab::maskFor(s.width), s.width);
+    if (kind == 2) {
+        const binlab::FloatSpec* f = binlab::floatByBits(s.width);
+        if (f == nullptr) {
+            showMsg(hwnd, s.zh ? std::to_string(s.width) + " 位没有 IEEE-754 容器"
+                               : std::to_string(s.width) + "-bit has no IEEE-754 container");
+            return;
+        }
+        replaceExpression(std::string(f->name) + " " + hex);
+        showMsg(hwnd, s.zh ? std::string("位不变 · 按 ") + f->name + " 解释"
+                           : std::string("same bits · read as ") + f->name);
+        winshun::debug(std::string("ra9fael.binarylab: setKind ") + f->name);
+        return;
+    }
+    // '@' marks a raw pattern, so a signed type accepts a set top bit.
+    const std::string type = binlab::typeNameFor(s.width, kind == 1);
+    replaceExpression(type + (kind == 1 ? " @" : " ") + hex);
+    showMsg(hwnd, s.zh ? "位不变 · 按 " + type + " 解释" : "same bits · read as " + type);
+    winshun::debug("ra9fael.binarylab: setKind " + type);
 }
 
 // ---- bash-style expression-line editing ------------------------------------
@@ -1870,16 +1960,21 @@ void paint(HWND hwnd)
         SelectObject(mem, toolFont);
         RECT wl { kGridMargin, s.toolTop, s.rcWidthBtn[0].left, s.toolTop + kToolH };
         drawLeftText(mem, wl, wideFromUtf8(s.zh ? "位宽" : "Width"), kLabelText);
-        RECT sgl { s.rcWidthBtn[3].right + 20, s.toolTop, s.rcSignBtn[0].left, s.toolTop + kToolH };
-        drawLeftText(mem, sgl, wideFromUtf8(s.zh ? "符号" : "Sign"), kLabelText);
+        RECT sgl { s.rcWidthBtn[3].right + 20, s.toolTop, s.rcKindBtn[0].left, s.toolTop + kToolH };
+        drawLeftText(mem, sgl, wideFromUtf8(kindLabel(s.zh)), kLabelText);
         static const int kWidths[4] = { 8, 16, 32, 64 };
-        for (int i = 0; i < 4; ++i)
-            drawSegment(mem, s.rcWidthBtn[i], std::to_wstring(kWidths[i]),
-                        s.width == kWidths[i], s.cMode);
-        drawSegment(mem, s.rcSignBtn[0], wideFromUtf8(s.zh ? "无符号 u" : "unsigned u"),
-                    !s.isSigned, s.cMode);
-        drawSegment(mem, s.rcSignBtn[1], wideFromUtf8(s.zh ? "有符号 i" : "signed i"),
-                    s.isSigned, s.cMode);
+        // In float mode the width buttons name the containers; 8 has none, so
+        // it is drawn disabled rather than hidden (the row must not reflow).
+        for (int i = 0; i < 4; ++i) {
+            const binlab::FloatSpec* f = s.isFloat ? binlab::floatByBits(kWidths[i]) : nullptr;
+            const std::wstring label = f ? wideFromUtf8(f->name) : std::to_wstring(kWidths[i]);
+            drawSegment(mem, s.rcWidthBtn[i], label, s.width == kWidths[i],
+                        s.cMode || (s.isFloat && f == nullptr));
+        }
+        const int kind = s.isFloat ? 2 : (s.isSigned ? 1 : 0);
+        for (int i = 0; i < 3; ++i)
+            drawSegment(mem, s.rcKindBtn[i], wideFromUtf8(kindName(i, s.zh)), kind == i,
+                        s.cMode || (i == 2 && binlab::floatByBits(s.width) == nullptr && !s.isFloat));
         SelectObject(mem, statusFont);
         DeleteObject(toolFont);
     }
@@ -2002,10 +2097,15 @@ void paint(HWND hwnd)
     // over the bottom row of bit cells.
     if (bits && s.hoverParity >= 0 && s.evalError.empty())
         left = parityDefinition(s.hoverParity, s.zh);
-    RECT sl { 12, statusTop, w - 200, statusTop + kStatusRowH };
-    drawLeftText(mem, sl, wideFromUtf8(left), kLabelText);
-
     const bool freshMsg = !s.msg.empty() && GetTickCount() - s.msgTick < kMsgFadeMs;
+    // A fresh message gets the width it measures (up to half the row), so a
+    // long hint is never clipped at its left edge; the context text yields.
+    int rightW = 188;
+    if (freshMsg)
+        rightW = std::min(w / 2, std::max(rightW, textWidth(mem, statusFont, wideFromUtf8(s.msg)) + 12));
+    RECT sl { 12, statusTop, w - 12 - rightW, statusTop + kStatusRowH };
+    SetTextColor(mem, kLabelText);
+    DrawTextW(mem, wideFromUtf8(left).c_str(), -1, &sl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     std::string right1;
     if (freshMsg)
         right1 = s.msg;
@@ -2016,7 +2116,7 @@ void paint(HWND hwnd)
                + " = " + std::to_string(getBit(s.value, s.focusBit));
     else
         right1 = "v0.3.0";
-    RECT sr1 { w - 200, statusTop, w - 12, statusTop + kStatusRowH };
+    RECT sr1 { w - 12 - rightW, statusTop, w - 12, statusTop + kStatusRowH };
     drawCenteredText(mem, sr1, wideFromUtf8(right1), freshMsg ? kOkText : kLabelText);
 
     const int row2 = statusTop + kStatusRowH;
@@ -2263,15 +2363,14 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     return 0;
                 }
             }
-            for (int i = 0; i < 2; ++i) {
-                if (inRect(s.rcSignBtn[i], x, y)) {
+            for (int i = 0; i < 3; ++i) {
+                if (inRect(s.rcKindBtn[i], x, y)) {
                     if (s.cMode) {
                         s.msg = s.zh ? "C 模式类型由表达式推导" : "C mode derives the type";
                         s.msgTick = GetTickCount();
                         InvalidateRect(hwnd, nullptr, TRUE);
                     } else {
-                        setType(hwnd, s.width, i == 1);
-                        InvalidateRect(hwnd, nullptr, TRUE);
+                        setKind(hwnd, i);
                     }
                     return 0;
                 }
