@@ -1985,6 +1985,7 @@ struct ByteWord {
     std::string chain;
     int width = 8;
     bool isFloat = false;
+    bool partial = false; // the word runs past the end of the data
 };
 
 struct BytesEval {

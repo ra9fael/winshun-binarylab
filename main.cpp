@@ -325,7 +325,7 @@ std::string editorExpression(const std::string& text)
 // `bytes fmt <name> [lsb|msb] <hex...>`: a summary row, one row per record (up
 // to kMaxRecordRows), and a trailing-bytes row. The summary's chain flips the
 // record order so Shift+Enter compares lsb-first with msb-first.
-winshun::Items recordItems(const binlab::RecordsEval& e, const binlab::RecordFormat& f, bool zh)
+winshun::Items recordItems(const binlab::RecordsEval& e, const binlab::RecordFormat& f, bool zh, const std::string& srcExpr)
 {
     const std::string order = e.msbFirst ? "msb-first" : "lsb-first";
     const std::string chain = "bytes fmt " + e.formatName + (e.msbFirst ? " lsb " : " msb ") + e.normalized;
@@ -337,11 +337,21 @@ winshun::Items recordItems(const binlab::RecordsEval& e, const binlab::RecordFor
     for (const std::string& w : e.warnings)
         subtitle += " · warning: " + w;
     subtitle += tr(zh, " · Shift+Enter 切换 ", " · Shift+Enter switches to ") + (e.msbFirst ? "lsb-first" : "msb-first");
+    const winshun::Json extra(winshun::Json::Object {
+        {"expression", srcExpr},
+    });
     winshun::Items items;
+    items.push_back(makeRow("bytes.open.workbench",
+                            tr(zh, "打开记录工作台 · ", "Open the record workbench · ") + e.formatName,
+                            tr(zh, "Enter 打开 · 选记录、点字段、切字节序",
+                               "Enter opens · pick records, click fields, switch byte order"),
+                            e.table, e.detail, chain, e.preview, icon, 101, zh, false, "bytes",
+                            winshun::Json(), true, extra, true));
     items.push_back(makeRow("bytes.fmt.summary",
                             e.formatName + " · " + order + " · " + std::to_string(e.records.size())
                                 + tr(zh, " 条记录 · 尾 ", " records · trailing ") + std::to_string(e.trailing),
-                            subtitle, e.table, e.detail, chain, e.preview, icon, 100, zh, false, "bytes"));
+                            subtitle, e.table, e.detail, chain, e.preview, icon, 100, zh, false, "bytes",
+                            winshun::Json(), true, extra, true));
     for (std::size_t r = 0; r < e.records.size() && r < binlab::kMaxRecordRows; ++r) {
         const binlab::Record& rec = e.records[r];
         std::string line;
@@ -437,7 +447,7 @@ winshun::Items formatListItems(const binlab::FormatSet& set, bool zh)
     return items;
 }
 
-winshun::Items bytesItems(const binlab::BytesEval& e, bool zh)
+winshun::Items bytesItems(const binlab::BytesEval& e, bool zh, const std::string& srcExpr)
 {
     const std::string icon = "color:#0F766E";
     const std::string streamTitle = std::to_string(e.data.size()) + tr(zh, " 字节 · ", " bytes · ")
@@ -445,7 +455,16 @@ winshun::Items bytesItems(const binlab::BytesEval& e, bool zh)
     const std::string streamSubtitle = e.format + " → " + e.typeName + " · " + std::to_string(e.words.size())
                                        + tr(zh, " 个完整字 · 末尾 ", " words · trailing ") + std::to_string(e.trailing)
                                        + tr(zh, " 字节", " bytes");
+    const winshun::Json extra(winshun::Json::Object {
+        {"expression", srcExpr},
+    });
     winshun::Items items;
+    items.push_back(makeRow("bytes.open.workbench",
+                            tr(zh, "打开字节流工作台 · ", "Open the byte workbench · ") + e.typeName,
+                            tr(zh, "Enter 打开 · 选字节、切端序、→ 位运算",
+                               "Enter opens · select bytes, switch endian, hand off to Bits"),
+                            e.normalized, e.detail, e.chain, e.preview, "color:#0F766E", 101, zh, false,
+                            "bytes", winshun::Json(), true, extra, true));
     items.push_back(makeRow("bytes.stream", streamTitle, streamSubtitle,
                             e.normalized, e.detail, e.chain, e.preview, icon, 100, zh, false, "bytes"));
 
@@ -657,12 +676,12 @@ struct BinaryLab : winshun::Plugin {
                 items = formatListItems(*set, zh);
             } else {
                 const auto r = binlab::evalRecords(text, *set);
-                items = r.success ? recordItems(r.value, *set->find(r.value.formatName), zh)
+                items = r.success ? recordItems(r.value, *set->find(r.value.formatName), zh, text)
                                   : winshun::Items {makeError(r.failure, zh)};
             }
         } else if (command == "bytes") {
             const auto r = binlab::evalBytes(text, st.defaultEndian);
-            items = r.success ? bytesItems(r.value, zh)
+            items = r.success ? bytesItems(r.value, zh, text)
                               : winshun::Items {makeError(r.failure, zh)};
         } else if (command == "struct") {
             const auto r = binlab::evalStruct(text, st.defaultPack);
@@ -695,9 +714,16 @@ struct BinaryLab : winshun::Plugin {
         if (a.action == "openEditor") {
             const Settings st = readSettings(settings());
             binlab::EditorSpec spec;
-            spec.mode = binlab::EditorSpec::Mode::Bits;
+            // The bytes page opens for a bytes row (data.kind == "bytes");
+            // everything else is the bits workbench.
+            spec.mode = data["kind"].toString() == "bytes" ? binlab::EditorSpec::Mode::Bytes
+                                                             : binlab::EditorSpec::Mode::Bits;
             spec.value = std::strtoull(data["valueHex"].toString().c_str(), nullptr, 16);
             spec.width = static_cast<int>(data["width"].toInt(st.defaultWidth));
+            if (spec.mode == binlab::EditorSpec::Mode::Bytes) {
+                std::lock_guard<std::mutex> lock(m_formatsLock);
+                spec.formats = m_formats;
+            }
             if (spec.width <= 0 || spec.width > 64)
                 spec.width = 32;
             spec.isSigned = data["signedType"].toBool();

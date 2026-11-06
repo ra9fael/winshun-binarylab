@@ -95,7 +95,8 @@
       "hint": {"zh": "例如 bytes hex u16le 34 12 78 56 · bytes fmt 列出记录格式", "en": "e.g. bytes hex u16le 34 12 78 56 · bytes fmt lists record formats"},
       "actions": [
         {"id": "copyPrimary", "title": {"zh": "复制主值", "en": "Copy value"}, "key": "Enter"},
-        {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": "Ctrl+Enter"},
+        {"id": "openEditor", "title": {"zh": "打开字节流工作台", "en": "Open the byte workbench"}, "key": "Ctrl+Enter"},
+        {"id": "copyDetail", "title": {"zh": "复制完整明细", "en": "Copy full details"}, "key": ""},
         {"id": "chainQuery", "title": {"zh": "改写为下一步查询", "en": "Chain follow-up query"}, "key": "Shift+Enter"}
       ]
     },

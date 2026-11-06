@@ -25,6 +25,7 @@
 // This file must not write to stdout; report problems through `error` and
 // winshun::debug (stderr).
 
+#include "formats.h"
 #include "logic.h"
 #include "winshun.h"
 
@@ -34,8 +35,10 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cwctype>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -69,6 +72,9 @@ struct EditorSpec {
     std::string hostEvalMode = "fixed";
     std::string hostFloatBar = "off"; // floatBar setting: seeds the in-window bar
     std::string dataDir;           // host dataDir; history.jsonl lives here
+    // Record formats for the bytes page (fmt ...): a snapshot taken when the
+    // window opens. A later settingsChanged reaches the next window.
+    std::shared_ptr<const FormatSet> formats;
 };
 
 bool openEditorWindow(const EditorSpec& spec, std::string& error);
@@ -177,6 +183,46 @@ struct EditorState {
     RECT rcHistoryBtn = {};
     RECT rcHistoryItem[kHistRows] = {};
     RECT rcClearHistory = {};
+
+    // ---- bytes page (v0.3b) ----
+    // Bits and bytes share the one EDIT control; each keeps its own text, saved
+    // and restored on a tab switch.
+    std::string bitsExpr;
+    std::string bytesExpr;
+    EditorSpec::Mode editOwner = EditorSpec::Mode::Bits; // whose text the EDIT holds
+    std::shared_ptr<const FormatSet> formats;
+    bool scalarHas = false;       // a good result of each kind, kept across errors
+    bool recordsHas = false;
+    bool bytesIsRecords = false;  // fmt ... (records) vs hex/bin/oct (scalar)
+    BytesEval bytesEval;
+    TypeSpec bytesType;
+    RecordsEval recordsEval;
+    const RecordFormat* recFmt = nullptr; // points into *formats
+    std::vector<int> colChars;    // widest text per record column, in chars
+    int bytesLaidOut = -1;        // layout key computeLayout() last used
+    std::size_t selAnchor = 0;    // scalar selection: anchor and active byte
+    std::size_t selActive = 0;
+    bool byteDrag = false;
+    std::size_t scrollRow = 0;    // first visible 16-byte line / record
+    std::size_t selRecord = 0;
+    std::size_t selField = 0;     // column index
+    std::size_t firstCol = 0;     // first visible scrolling column
+    bool formatOpen = false;
+    int monoW = 7;                // Consolas 13 advance
+    int byteTop = 0;              // header row of the grid / table
+    int offW = 40;
+    int byteW = 24;
+    int asciiLeft = 0;
+    RECT rcToolLabel[5] = {};     // toolbar captions: width, type, endian | format, order
+    int formatScroll = 0;         // first dropdown entry shown
+    RECT rcEndian[2] = {};        // LE | BE
+    RECT rcFormatBtn = {};
+    RECT rcOrder[2] = {};         // LSB | MSB
+    RECT rcFormatItem[10] = {};
+    RECT rcTable = {};
+    RECT rcByteChip[3] = {};      // HEX | DEC/FLOAT | BIN of the active word
+    RECT rcCellChip = {};         // records: the selected field
+    RECT rcToBits = {};
 };
 
 EditorState& state()
@@ -410,6 +456,13 @@ constexpr int kStatusRowH = 23;
 constexpr int kPanelContentH = 200; // settings/help two-column content area
 constexpr int kPanelRowH = 26;
 constexpr int kMinClientH = kTopH + kPanelContentH + kStatusH; // 280
+// Bytes page: a fixed number of rows, so the window never grows with the data;
+// the wheel and the arrow keys scroll instead.
+constexpr int kByteRows = 8;
+constexpr int kByteRowH = 20;
+constexpr int kByteHeadH = 18;
+constexpr int kFormatRows = 10;   // format dropdown entries (rcFormatItem)
+constexpr int kFormatRowH = 22;
 
 const wchar_t* uiFace(bool zh)
 {
@@ -672,6 +725,23 @@ void setBit(std::uint64_t& value, int width, int bit, int v)
         value &= ~(1ull << bit);
 }
 
+// A bit edit changes the pattern a float reading decodes, so the FLOAT text has
+// to be re-derived from the new bits. Leaving it alone kept the number the
+// expression produced before the edit: painting all 32 bits to 1 still showed
+// the old "1.2" instead of NaN. The unit note describes the literal, not these
+// bits, so it goes away with the edit.
+void refreshFloatReadout()
+{
+    EditorState& s = state();
+    if (!s.isFloat)
+        return;
+    const binlab::FloatSpec* f = binlab::floatByBits(s.width);
+    if (f == nullptr)
+        return;
+    s.floatText = binlab::exactFloatText(s.value & binlab::maskFor(s.width), *f);
+    s.unitNote.clear();
+}
+
 // MSB first within each byte group.
 int bitAt(int rows, int cols, int row, int col)
 {
@@ -702,11 +772,17 @@ std::vector<ChipTexts> chipTextsFor(int width)
     };
 }
 
+int bytesMinWidth(HDC dc);
+void computeBytesLayout(HDC dc);
+void logBytesLayout(std::string& line);
+void evaluateBytes();
+
 // Compute every cached geometry rect from the current state.
 void computeLayout(HDC dc)
 {
     EditorState& s = state();
     const bool bits = s.mode == EditorSpec::Mode::Bits;
+    const bool bytes = s.mode == EditorSpec::Mode::Bytes;
 
     HFONT tabFont = uiFont(12, false, s.zh);
     const int tabPad = 12;
@@ -761,6 +837,8 @@ void computeLayout(HDC dc)
     int clientW = std::max(480, 2 * kGridMargin + 8 * kMinCellW + kNibbleGap);
     if (bits)
         clientW = std::max(clientW, toolbarW);
+    if (bytes)
+        clientW = std::max(clientW, bytesMinWidth(dc));
     if (!chips.empty()) {
         if (oneRow + 24 <= 616)
             clientW = std::max(clientW, oneRow + 24);
@@ -866,6 +944,12 @@ void computeLayout(HDC dc)
         for (RECT& r : s.rcSetMode)
             r = {};
         s.rcClearHistory = {};
+    } else if (bytes) {
+        s.panelTop = s.panelBottom = 0;
+        s.barTop = 0;
+        for (RECT& r : s.rcBarSeg)
+            r = {};
+        computeBytesLayout(dc);
     } else {
         // All non-bits tabs share one fixed content height, so switching
         // between them never produces a small resize jitter.
@@ -905,8 +989,9 @@ void computeLayout(HDC dc)
         DeleteObject(editProbe);
         s.editH = std::max(12, static_cast<int>(etm.tmHeight));
     }
+    // The bytes page has no history dropdown, so its line runs to the edge.
     s.rcExpr = { 64, kTopH + (kExprH - s.editH) / 2,
-                 s.clientW - 12 - kHistBtnW - 6, kTopH + (kExprH + s.editH) / 2 };
+                 bytes ? s.clientW - 12 : s.clientW - 12 - kHistBtnW - 6, kTopH + (kExprH + s.editH) / 2 };
     s.rcHistoryBtn = { s.rcExpr.right + 6, s.rcExpr.top, s.clientW - 12, s.rcExpr.bottom };
     {
         // Full-width panel: a narrow right-aligned dropdown would cut through
@@ -969,6 +1054,8 @@ void logLayout()
             line += " bar" + std::to_string(i) + "=" + rectStr(s.rcBarSeg[i]);
         line += " barTop=" + std::to_string(s.barTop);
     }
+    if (s.mode == EditorSpec::Mode::Bytes)
+        logBytesLayout(line);
     line += " expr=" + rectStr(s.rcExpr)
           + " histBtn=" + rectStr(s.rcHistoryBtn)
           + " barToggle=" + rectStr(s.rcBarToggle)
@@ -1002,7 +1089,8 @@ void relayout(HWND hwnd)
     if (s.edit) {
         MoveWindow(s.edit, s.rcExpr.left, s.rcExpr.top,
                    rcWidth(s.rcExpr), s.rcExpr.bottom - s.rcExpr.top, TRUE);
-        ShowWindow(s.edit, s.mode == EditorSpec::Mode::Bits ? SW_SHOWNOACTIVATE : SW_HIDE);
+        const bool hasLine = s.mode == EditorSpec::Mode::Bits || s.mode == EditorSpec::Mode::Bytes;
+        ShowWindow(s.edit, hasLine ? SW_SHOWNOACTIVATE : SW_HIDE);
     }
     logLayout();
     InvalidateRect(hwnd, nullptr, TRUE);
@@ -1479,6 +1567,10 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (wp == VK_RETURN) {
+            if (s.mode == EditorSpec::Mode::Bytes) {
+                evaluateBytes();
+                return 0;
+            }
             commitExpression(s.hwnd);
             return 0;
         }
@@ -1568,6 +1660,1067 @@ LRESULT CALLBACK editProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     return CallWindowProc(s.origEditProc, h, msg, wp, lp);
 }
+
+// ---- bytes page (v0.3b) -------------------------------------------------------
+// One expression line, two readings: `hex u16le 34 12 ...` is the scalar
+// decoder (evalBytes, the query's own function) and `fmt <name> ...` is the
+// record decoder (evalRecords). The page keeps no bytes of its own: every
+// toolbar click rewrites the expression, so the screen always shows what the
+// line says and the line can be pasted back into the query box.
+
+std::string joinTokens(const std::vector<std::string>& t)
+{
+    std::string out;
+    for (const std::string& x : t)
+        out += (out.empty() ? "" : " ") + x;
+    return out;
+}
+
+bool isOrderWord(const std::string& t)
+{
+    const std::string o = binlab::lower(t);
+    return o == "msb" || o == "lsb" || o == "msb-first" || o == "lsb-first";
+}
+
+bool exprIsRecords()
+{
+    const std::vector<std::string> t = binlab::splitWhitespace(expressionText());
+    return !t.empty() && binlab::lower(t[0]) == "fmt";
+}
+
+COLORREF colorFromHex(const std::string& c, COLORREF fallback)
+{
+    if (!binlab::validColor(c))
+        return fallback;
+    const auto byte = [&](std::size_t i) { return binlab::digitValue(c[i]) * 16 + binlab::digitValue(c[i + 1]); };
+    return RGB(byte(1), byte(3), byte(5));
+}
+
+std::string hex2(std::uint8_t b)
+{
+    char cell[4];
+    std::snprintf(cell, sizeof cell, "%02X", b);
+    return cell;
+}
+
+std::string hex4(std::size_t v)
+{
+    char cell[12];
+    std::snprintf(cell, sizeof cell, "0x%04X", static_cast<unsigned>(v));
+    return cell;
+}
+
+// Re-evaluate the bytes expression line. Each kind keeps its last good result:
+// a failed `fmt ...` does not blank the scalar view, and the toolbar switches
+// kinds without re-deriving bytes.
+void evaluateBytes()
+{
+    EditorState& s = state();
+    if (!s.edit || s.mode != EditorSpec::Mode::Bytes || s.suppressEval)
+        return;
+    const std::string expr = expressionText();
+    s.bytesExpr = expr;
+    if (expr.empty()) {
+        s.evalError.clear();
+        s.bytesIsRecords = false;
+        return;
+    }
+    const std::vector<std::string> tokens = binlab::splitWhitespace(expr);
+    const bool records = binlab::lower(tokens[0]) == "fmt";
+    s.bytesIsRecords = records;
+    if (records) {
+        if (!s.formats) {
+            s.evalError = "E_FORMAT: no record formats loaded";
+            return;
+        }
+        if (tokens.size() == 1) {
+            s.evalError.clear();
+            s.recordsHas = false;
+            s.recFmt = nullptr;
+            relayout(s.hwnd);
+            return;
+        }
+        const auto r = binlab::evalRecords(expr, *s.formats);
+        if (r.success) {
+            s.evalError.clear();
+            s.recordsEval = r.value;
+            s.recFmt = s.formats->find(r.value.formatName);
+            s.recordsHas = true;
+            if (s.selRecord >= r.value.records.size())
+                s.selRecord = 0;
+            if (s.recFmt && s.selField >= s.recFmt->columns.size())
+                s.selField = 0;
+            s.scrollRow = 0;
+            s.firstCol = 0;
+            relayout(s.hwnd);
+            return;
+        }
+        s.evalError = r.failure.code + ": " + r.failure.message;
+        winshun::debug("ra9fael.binarylab: evalError " + s.evalError);
+        InvalidateRect(s.hwnd, nullptr, TRUE);
+        return;
+    }
+    const auto r = binlab::evalBytes(expr, s.endian);
+    if (r.success) {
+        s.evalError.clear();
+        s.bytesEval = r.value;
+        s.bytesType = binlab::TypeSpec {};
+        binlab::resolveType(tokens.size() > 1 ? tokens[1] : "u8", s.endian, s.bytesType);
+        s.scalarHas = true;
+        if (s.selAnchor >= r.value.data.size())
+            s.selAnchor = 0;
+        if (s.selActive >= r.value.data.size())
+            s.selActive = std::min<std::size_t>(r.value.data.size(), 1) - (r.value.data.empty() ? 0 : 1);
+        if (s.selActive >= r.value.data.size())
+            s.selActive = 0;
+        s.scrollRow = 0;
+        relayout(s.hwnd);
+        return;
+    }
+    s.evalError = r.failure.code + ": " + r.failure.message;
+    winshun::debug("ra9fael.binarylab: evalError " + s.evalError);
+    InvalidateRect(s.hwnd, nullptr, TRUE);
+}
+
+// ---- bytes geometry -----------------------------------------------------------
+
+// One record row, offset line and byte cell, in client coordinates. Row 0 is
+// the header; the wheel scrolls.
+RECT byteCell(std::size_t byteIndex)
+{
+    const EditorState& s = state();
+    const std::size_t row = byteIndex / 16 - s.scrollRow;
+    const int col = static_cast<int>(byteIndex % 16);
+    const int left = s.offW + 8 + col * s.byteW + (col >= 8 ? kNibbleGap : 0);
+    const int top = s.byteTop + static_cast<int>(row) * kByteRowH + kByteHeadH;
+    return { left, top, left + s.byteW - 2, top + kByteRowH - 2 };
+}
+
+int recColumnLeft(std::size_t col)
+{
+    const EditorState& s = state();
+    int x = s.offW + 8;
+    for (std::size_t c = s.firstCol; c < col; ++c)
+        x += (c < s.colChars.size() ? s.colChars[c] * s.monoW + 24 : 0);
+    return x;
+}
+
+int recColumnWidth(std::size_t col)
+{
+    const EditorState& s = state();
+    return col < s.colChars.size() ? s.colChars[col] * s.monoW + 24 : 0;
+}
+
+std::size_t recColumns()
+{
+    const EditorState& s = state();
+    return s.recFmt ? s.recFmt->columns.size() : (s.recordsEval.records.empty() ? 0 : s.recordsEval.records[0].cells.size());
+}
+
+std::size_t recordsFit()
+{
+    // 8 grid rows: one header line is painted above, so 7 records fit. Kept at
+    // least 1 so an empty table still has a row to draw its hint in.
+    return std::max<std::size_t>(1, kByteRows - 1);
+}
+
+std::size_t bytesFitRows()
+{
+    return kByteRows;  // fixed row count: the window height never follows the data
+}
+
+std::size_t visibleBytes()
+{
+    return bytesFitRows() * 16;
+}
+
+std::size_t bytesRowsTotal()
+{
+    const EditorState& s = state();
+    return (s.bytesEval.data.size() + 15) / 16;
+}
+
+std::size_t maxScrollRow()
+{
+    const EditorState& s = state();
+    if (s.bytesIsRecords) {
+        const std::size_t total = s.recordsEval.records.size();
+        const std::size_t fit = recordsFit();
+        return total > fit ? total - fit : 0;
+    }
+    const std::size_t total = bytesRowsTotal();
+    return total > bytesFitRows() ? total - bytesFitRows() : 0;
+}
+
+int bytesMinWidth(HDC dc)
+{
+    EditorState& s = state();
+    HFONT f = monoFont(12, false);
+    HGDIOBJ old = SelectObject(dc, f);
+    // 16 byte cells, one nibble gap, an offset column and an ASCII tail.
+    const int gw = 16 * (s.byteW + 2) + kNibbleGap + s.offW + 8 + 16 * s.monoW + 16;
+    int tw = gw;
+    // The toolbar: two label + segment groups.
+    HFONT toolFont = uiFont(12, false, s.zh);
+    SelectObject(dc, toolFont);
+    const auto labelW = [&](const std::string& t) { return textWidth(dc, toolFont, wideFromUtf8(t)) + 10; };
+    const int segW = std::max(textWidth(dc, toolFont, L"BE"), textWidth(dc, toolFont, L"f64")) + 16;
+    tw = std::max(tw, kGridMargin + labelW(s.zh ? "位宽" : "Width") + 4 * 36 + 16 + labelW(s.zh ? "类型" : "Type")
+                           + labelW(s.zh ? "类型" : "Type") + 3 * segW + kGridMargin + 120);
+    tw = std::max(tw, 560);
+    SelectObject(dc, old);
+    DeleteObject(toolFont);
+    DeleteObject(f);
+    return tw;
+}
+
+// Bytes-page layout. Everything is derived inside so the two readings stay in
+// step: the toolbar row, then the fixed kByteRows rows, then the word readout
+// row, with the status bar at the very bottom.
+void computeBytesLayout(HDC dc)
+{
+    EditorState& s = state();
+    HFONT probe = monoFont(12, false);
+    HGDIOBJ old = SelectObject(dc, probe);
+    TEXTMETRICW tm {};
+    GetTextMetricsW(dc, &tm);
+    s.monoW = std::max(6, static_cast<int>(tm.tmAveCharWidth));
+    SelectObject(dc, old);
+    DeleteObject(probe);
+
+    const int contentTop = kTopH + kExprH + 8;
+    // toolbar row
+    s.toolTop = contentTop;
+    HFONT toolFont = uiFont(12, false, s.zh);
+    old = SelectObject(dc, toolFont);
+    const auto labelW = [&](const std::string& t) { return textWidth(dc, toolFont, wideFromUtf8(t)) + 10; };
+    const int segW = std::max(textWidth(dc, toolFont, L"BE"), textWidth(dc, toolFont, L"f64")) + 16;
+    int x = kGridMargin;
+    const bool records = s.bytesIsRecords;
+    // (Re)measure the kind labels: in scalar mode they are u/i/f, in record
+    // mode the row is the format dropdown + order buttons.
+    if (!records) {
+        s.rcToolLabel[0] = { x, s.toolTop, x += labelW(s.zh ? "位宽" : "Width"), s.toolTop + kToolH };
+        for (int i = 0; i < 4; ++i) {
+            s.rcWidthBtn[i] = { x, s.toolTop, x + 36, s.toolTop + kToolH };
+            x += 36;
+        }
+        x += 12;
+        s.rcToolLabel[1] = { x, s.toolTop, x += labelW(s.zh ? "类型" : "Type"), s.toolTop + kToolH };
+        for (int i = 0; i < 3; ++i) {
+            s.rcKindBtn[i] = { x, s.toolTop, x + segW, s.toolTop + kToolH };
+            x += segW;
+        }
+        x += 12;
+        s.rcToolLabel[2] = { x, s.toolTop, x += labelW("LE/BE"), s.toolTop + kToolH };
+        s.rcEndian[0] = { x, s.toolTop, x + segW, s.toolTop + kToolH };
+        x += segW;
+        s.rcEndian[1] = { x, s.toolTop, x + segW, s.toolTop + kToolH };
+        x += segW;
+        s.rcFormatBtn = {};
+        for (RECT& r : s.rcOrder)
+            r = {};
+        for (RECT& r : s.rcFormatItem)
+            r = {};
+    } else {
+        s.rcToolLabel[3] = { x, s.toolTop, x += labelW(s.zh ? "格式" : "Format"), s.toolTop + kToolH };
+        HFONT probeFont = monoFont(12, false);
+        SelectObject(dc, probeFont);
+        int widest = 40;
+        if (s.formats)
+            for (const FormatEntry& e : s.formats->entries)
+                widest = std::max(widest, textWidth(dc, probeFont, wideFromUtf8(e.name)) + 30);
+        SelectObject(dc, toolFont);
+        DeleteObject(probeFont);
+        s.rcFormatBtn = { x, s.toolTop, x + widest, s.toolTop + kToolH };
+        x = s.rcFormatBtn.right + 12;
+        s.rcToolLabel[4] = { x, s.toolTop, x += labelW(s.zh ? "记录序" : "Order"), s.toolTop + kToolH };
+        for (int i = 0; i < 2; ++i) {
+            s.rcOrder[i] = { x, s.toolTop, x + segW, s.toolTop + kToolH };
+            x += segW;
+        }
+        for (RECT& r : s.rcWidthBtn)
+            r = {};
+        for (RECT& r : s.rcKindBtn)
+            r = {};
+        for (RECT& r : s.rcEndian)
+            r = {};
+        // dropdown items below the button
+        const int n = s.formats ? std::min<std::size_t>(kFormatRows, s.formats->entries.size()) : 0;
+        for (int i = 0; i < n; ++i)
+            s.rcFormatItem[i] = { s.rcFormatBtn.left, s.rcFormatBtn.bottom + 2 + i * kFormatRowH,
+                                  s.rcFormatBtn.right, s.rcFormatBtn.bottom + 2 + (i + 1) * kFormatRowH };
+        for (int i = n; i < kFormatRows; ++i)
+            s.rcFormatItem[i] = {};
+    }
+    SelectObject(dc, old);
+    DeleteObject(toolFont);
+
+    // grid / table header
+    s.byteTop = s.toolTop + kToolH + 6;
+    s.offW = 40;
+    s.byteW = 2 * s.monoW + 10;
+    s.asciiLeft = s.offW + 8 + 16 * s.byteW + kNibbleGap + 4;
+
+    // word/record readout row + → 位运算 button, fixed two-line strip
+    s.gridTop = s.byteTop + kByteHeadH + kByteRows * kByteRowH + 4;
+    HFONT uiProbe = uiFont(12, false, s.zh);
+    old = SelectObject(dc, uiProbe);
+    const std::string toBits = s.zh ? "→ 位运算" : "→ Bits";
+    const int btnW = textWidth(dc, uiProbe, wideFromUtf8(toBits)) + 24;
+    SelectObject(dc, old);
+    DeleteObject(uiProbe);
+    const int stripTop = s.gridTop;
+    const int stripH = 26;
+    s.rcToBits = { s.clientW - 12 - btnW, stripTop, s.clientW - 12, stripTop + stripH };
+    if (!s.bytesIsRecords) {
+        int cx = 12;
+        const char* labels[3] = { "HEX ", s.bytesType.flt ? "FLOAT " : "DEC ", "BIN " };
+        for (int i = 0; i < 3; ++i) {
+            const int w = static_cast<int>(std::string(labels[i]).size()) * 6 + 64;
+            s.rcByteChip[i] = { cx, stripTop, cx + w, stripTop + stripH };
+            cx += w + 6;
+        }
+        s.rcCellChip = {};
+    } else {
+        s.rcByteChip[0] = {};
+        s.rcByteChip[1] = {};
+        s.rcByteChip[2] = {};
+        s.rcCellChip = { 12, stripTop, s.rcToBits.left - 8, stripTop + stripH };
+    }
+    s.rcTable = { s.offW + 8, s.byteTop + kByteHeadH, s.clientW - 12, s.byteTop + kByteHeadH + kByteRows * kByteRowH };
+
+    s.clientH = std::max(s.clientH, stripTop + stripH + 10 + kStatusH);
+    s.bytesLaidOut = s.clientW * 4 + (s.bytesIsRecords ? 2 : 1) + static_cast<int>(s.clientH);
+    (void)dc;
+}
+
+void logBytesLayout(std::string& line)
+{
+    EditorState& s = state();
+    line += " bytesMode=" + std::string(s.bytesIsRecords ? "records" : "scalar")
+          + " byteTop=" + std::to_string(s.byteTop)
+          + " byteW=" + std::to_string(s.byteW)
+          + " offW=" + std::to_string(s.offW)
+          + " asciiLeft=" + std::to_string(s.asciiLeft)
+          + " scrollRow=" + std::to_string(s.scrollRow)
+          + " monoW=" + std::to_string(s.monoW);
+    if (s.bytesIsRecords) {
+        line += " table=" + rectStr(s.rcTable)
+              + " fmtBtn=" + rectStr(s.rcFormatBtn)
+              + " ord0=" + rectStr(s.rcOrder[0])
+              + " ord1=" + rectStr(s.rcOrder[1])
+              + " cellChip=" + rectStr(s.rcCellChip)
+              + " firstCol=" + std::to_string(s.firstCol)
+              + " selRecord=" + std::to_string(s.selRecord)
+              + " selField=" + std::to_string(s.selField);
+    } else {
+        line += " endian=" + s.endian
+              + " endianBtn0=" + rectStr(s.rcEndian[0])
+              + " endianBtn1=" + rectStr(s.rcEndian[1])
+              + " byte0=" + rectStr(byteCell(s.selActive < s.bytesEval.data.size() ? s.selActive : 0))
+              + " chip0=" + rectStr(s.rcByteChip[0])
+              + " toBits=" + rectStr(s.rcToBits)
+              + " selBegin=" + std::to_string(std::min(s.selAnchor, s.selActive))
+              + " selEnd=" + std::to_string(std::max(s.selAnchor, s.selActive));
+    }
+}
+
+// Widest cell text per record column: header and the visible records.
+void measureColumns(HDC dc)
+{
+    EditorState& s = state();
+    s.colChars.assign(recColumns(), 4);
+    if (!s.recFmt)
+        return;
+    for (std::size_t c = 0; c < s.colChars.size(); ++c)
+        s.colChars[c] = std::max<std::size_t>(4, s.recFmt->columns[c].size());
+    const std::size_t shown = std::min<std::size_t>(s.recordsEval.records.size(), recordsFit() + s.scrollRow);
+    for (std::size_t r = s.scrollRow; r < shown; ++r) {
+        const Record& rec = s.recordsEval.records[r];
+        for (std::size_t c = 0; c < rec.cells.size() && c < s.colChars.size(); ++c)
+            s.colChars[c] = std::max<int>(s.colChars[c], static_cast<int>(rec.cells[c].text.size()));
+    }
+    (void)dc;
+}
+
+// Byte index under the point, or SIZE_MAX.
+std::size_t hitByte(int x, int y)
+{
+    const EditorState& s = state();
+    if (y < s.byteTop + kByteHeadH || y >= s.byteTop + kByteHeadH + kByteRows * kByteRowH)
+        return SIZE_MAX;
+    for (std::size_t i = s.scrollRow * 16; i < s.bytesEval.data.size(); ++i) {
+        if (i >= (s.scrollRow + bytesFitRows()) * 16)
+            break;
+        const RECT r = byteCell(i);
+        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+            return i;
+    }
+    return SIZE_MAX;
+}
+
+// Record / column under the point.
+bool hitRecordCell(int x, int y, std::size_t& rec, std::size_t& col)
+{
+    const EditorState& s = state();
+    if (y < s.byteTop + kByteHeadH || y >= s.byteTop + kByteHeadH + kByteRows * kByteRowH)
+        return false;
+    const std::size_t fit = recordsFit();
+    if (s.scrollRow + (y - s.byteTop - kByteHeadH) / kByteRowH >= s.recordsEval.records.size())
+        return false;
+    rec = s.scrollRow + static_cast<std::size_t>(y - s.byteTop - kByteHeadH) / kByteRowH;
+    if (rec - s.scrollRow >= fit)
+        return false;
+    for (std::size_t c = s.firstCol; c < recColumns(); ++c) {
+        const int left = recColumnLeft(c);
+        if (x >= left && x < left + recColumnWidth(c)) {
+            col = c;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t activeByte()
+{
+    const EditorState& s = state();
+    return std::max(s.selAnchor, s.selActive);
+}
+
+// The word that covers the active byte: type width, little-endian value. The
+// byte order of the reading follows the toolbar endian, so "select two bytes"
+// is the LE/BE reading the user sees.
+binlab::ByteWord wordAt(std::size_t byteIndex)
+{
+    const EditorState& s = state();
+    binlab::ByteWord w;
+    const int size = std::max(1, s.bytesType.size);
+    const std::size_t width = static_cast<std::size_t>(size) * 8;
+    w.offset = byteIndex;
+    w.width = static_cast<int>(width);
+    w.typeName = s.bytesType.name;
+    w.isFloat = s.bytesType.flt != nullptr;
+    std::uint64_t raw = 0;
+    std::ostringstream bytes;
+    for (int i = 0; i < size; ++i) {
+        const std::size_t idx = byteIndex + i;
+        std::uint8_t b = idx < s.bytesEval.data.size() ? s.bytesEval.data[idx] : 0;
+        if (idx >= s.bytesEval.data.size())
+            w.partial = true;
+        const int shift = s.bytesType.big ? (size - 1 - i) : i;
+        raw |= static_cast<std::uint64_t>(b) << (8 * shift);
+        bytes << (i ? " " : "") << hex2(b);
+    }
+    w.bitsHex = binlab::hexUpper(raw & binlab::maskFor(static_cast<int>(width)), static_cast<int>(width));
+    w.primary = w.isFloat ? binlab::formatFloat(raw, *s.bytesType.flt)
+                          : (s.bytesType.signedType
+                                 ? binlab::represent(raw, static_cast<int>(width), true).dec
+                                 : w.bitsHex);
+    std::ostringstream d;
+    d << w.typeName << " @" << byteIndex << "  bytes " << bytes.str() << "\n"
+      << (w.isFloat ? "FLOAT " + w.primary : "HEX " + w.bitsHex) << "\n"
+      << "bits " << binlab::binGrouped(raw, static_cast<int>(width));
+    w.detail = d.str();
+    w.chain = "bits " + binlab::typeNameFor(static_cast<int>(width), false) + " " + w.bitsHex;
+    return w;
+}
+
+std::string selectionSummary(const EditorState& s)
+{
+    const std::size_t b0 = std::min(s.selAnchor, s.selActive);
+    const std::size_t b1 = std::max(s.selAnchor, s.selActive);
+    if (s.bytesEval.data.empty() || b0 >= s.bytesEval.data.size())
+        return {};
+    std::string hex;
+    for (std::size_t i = b0; i <= b1 && i < s.bytesEval.data.size(); ++i)
+        hex += hex2(s.bytesEval.data[i]);
+    return hex4(b0) + "\xE2\x80\x93" + hex4(b1) + " (" + hex + ")";
+}
+
+// The record cell under the selection, with raw bytes and rule text.
+std::string recordCellDetail(const EditorState& s)
+{
+    if (!s.recordsHas || !s.recFmt || s.recordsEval.records.empty())
+        return {};
+    const std::size_t rec = std::min(s.selRecord, s.recordsEval.records.size() - 1);
+    const Record& r = s.recordsEval.records[rec];
+    if (s.selField >= r.cells.size())
+        return {};
+    const FieldSpec& fs = s.recFmt->fields[0];
+    (void)fs;
+    std::ostringstream d;
+    d << "#" << rec << " @" << r.offset << " · " << s.recFmt->columns[s.selField] << "\n";
+    d << "value " << r.cells[s.selField].text << "\n";
+    d << "bits " << binlab::binGrouped(r.cells[s.selField].bits, 64);
+    if (r.rule >= 0)
+        d << "\nrule " << s.recFmt->rules[static_cast<std::size_t>(r.rule)].name;
+    if (!r.ruleError.empty())
+        d << "\nrule error: " << r.ruleError;
+    return d.str();
+}
+
+std::string bytesStatusLeft(const EditorState& s)
+{
+    if (s.bytesIsRecords) {
+        if (!s.recordsHas || !s.recFmt)
+            return s.zh ? "记录格式 · 在表达式行输入 fmt <名称>" : "records · type fmt <name>";
+        std::string left = s.recFmt->name + " · " + (s.recordsEval.msbFirst ? "msb-first" : "lsb-first")
+                         + " · " + std::to_string(s.recordsEval.records.size())
+                         + (s.zh ? " 条 · 尾 " : " records · trailing ")
+                         + std::to_string(s.recordsEval.trailing);
+        if (!s.recFmt->rules.empty())
+            left += (s.zh ? " · 命中 " : " · hits ") + std::to_string(s.recordsEval.ruleHits)
+                  + (s.zh ? " 错 " : " err ") + std::to_string(s.recordsEval.ruleErrors);
+        if (!s.recordsEval.records.empty())
+            left += " | #" + std::to_string(s.selRecord) + " "
+                  + s.recFmt->columns[std::min(s.selField, s.recFmt->columns.size() - 1)];
+        return left;
+    }
+    if (!s.scalarHas)
+        return s.zh ? "字节流 · 例：hex u16le 34 12 78 56" : "bytes · e.g. hex u16le 34 12 78 56";
+    std::string left = s.bytesType.name + " · " + std::to_string(s.bytesEval.data.size())
+                     + (s.zh ? " 字节 · 尾 " : " bytes · trailing ") + std::to_string(s.bytesEval.trailing);
+    const std::string sel = selectionSummary(s);
+    if (!sel.empty())
+        left += " | " + sel;
+    return left;
+}
+
+// ---- bytes painting -----------------------------------------------------------
+
+void paintBytesToolbar(HDC dc)
+{
+    EditorState& s = state();
+    HFONT toolFont = uiFont(12, false, s.zh);
+    SelectObject(dc, toolFont);
+    static const int kWidths[4] = { 8, 16, 32, 64 };
+    if (!s.bytesIsRecords) {
+        drawLeftText(dc, s.rcToolLabel[0], wideFromUtf8(s.zh ? "位宽" : "Width"), kLabelText);
+        for (int i = 0; i < 4; ++i)
+            drawSegment(dc, s.rcWidthBtn[i], std::to_wstring(kWidths[i]), s.bytesType.size * 8 == kWidths[i]);
+        drawLeftText(dc, s.rcToolLabel[1], wideFromUtf8(s.zh ? "类型" : "Type"), kLabelText);
+        const int kind = s.bytesType.flt ? 2 : (s.bytesType.signedType ? 1 : 0);
+        for (int i = 0; i < 3; ++i)
+            drawSegment(dc, s.rcKindBtn[i], wideFromUtf8(kindName(i, s.zh)), kind == i);
+        drawLeftText(dc, s.rcToolLabel[2], L"LE/BE", kLabelText);
+        drawSegment(dc, s.rcEndian[0], L"LE", s.endian != "be");
+        drawSegment(dc, s.rcEndian[1], L"BE", s.endian == "be");
+    } else {
+        drawLeftText(dc, s.rcToolLabel[3], wideFromUtf8(s.zh ? "格式" : "Format"), kLabelText);
+        const RECT b = s.rcFormatBtn;
+        HBRUSH fill = CreateSolidBrush(s.formatOpen ? kAccent : kOverlay);
+        FillRect(dc, &b, fill);
+        DeleteObject(fill);
+        frameRect(dc, b, s.formatOpen ? kAccent : RGB(80, 90, 102));
+        HFONT mono = monoFont(12, false);
+        SelectObject(dc, mono);
+        const std::string name = s.recFmt ? s.recFmt->name : (s.zh ? "选择格式 ▾" : "choose ▾");
+        RECT t { b.left + 8, b.top, b.right - 24, b.bottom };
+        drawLeftText(dc, t, wideFromUtf8(name), s.formatOpen ? kBitOnText : kPanelText);
+        drawCenteredText(dc, RECT { b.right - 22, b.top, b.right - 4, b.bottom }, L"\u25BE", kPanelText);
+        DeleteObject(mono);
+        SelectObject(dc, toolFont);
+        drawLeftText(dc, s.rcToolLabel[4], wideFromUtf8(s.zh ? "记录序" : "Order"), kLabelText);
+        const bool msb = s.recordsHas ? s.recordsEval.msbFirst : true;
+        drawSegment(dc, s.rcOrder[0], L"LSB", !msb);
+        drawSegment(dc, s.rcOrder[1], L"MSB", msb);
+    }
+    DeleteObject(toolFont);
+}
+
+// One chip: a label and a value in one flat surface, like the bits page.
+void drawBytesChip(HDC dc, const RECT& r, const std::string& label, const std::string& value, bool enabled)
+{
+    HBRUSH fill = CreateSolidBrush(kBitOff);
+    FillRect(dc, &r, fill);
+    DeleteObject(fill);
+    frameRect(dc, r, kSeparator);
+    HFONT lf = uiFont(11, false, state().zh);
+    SelectObject(dc, lf);
+    RECT lr { r.left + 8, r.top, r.right - 8, r.bottom };
+    drawLeftText(dc, lr, wideFromUtf8(label), kLabelText);
+    const int lw = textWidth(dc, lf, wideFromUtf8(label));
+    HFONT vf = monoFont(12, false);
+    SelectObject(dc, vf);
+    RECT vr { r.left + 8 + lw, r.top, r.right - 8, r.bottom };
+    SetTextColor(dc, enabled ? kValueText : kLabelText);
+    DrawTextW(dc, wideFromUtf8(value).c_str(), -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DeleteObject(lf);
+    DeleteObject(vf);
+}
+
+void paintBytesScalar(HDC dc)
+{
+    EditorState& s = state();
+    HFONT mono = monoFont(12, false);
+    HFONT monoB = monoFont(12, true);
+    SelectObject(dc, mono);
+    const bool has = s.scalarHas && !s.bytesEval.data.empty();
+    const std::size_t b0 = std::min(s.selAnchor, s.selActive);
+    const std::size_t b1 = std::max(s.selAnchor, s.selActive);
+    // header: column numbers 0..F
+    RECT hl { s.offW + 8, s.byteTop, s.offW + 8 + 16 * (s.byteW + 2), s.byteTop + kByteHeadH };
+    SetTextColor(dc, kLabelText);
+    for (int c = 0; c < 16; ++c) {
+        const int x = s.offW + 8 + c * s.byteW + (c >= 8 ? kNibbleGap : 0);
+        RECT t { x, s.byteTop, x + s.byteW, s.byteTop + kByteHeadH };
+        drawCenteredText(dc, t, wideFromUtf8(std::string(1, "0123456789ABCDEF"[c])), kLabelText);
+    }
+    drawLeftText(dc, RECT { 12, s.byteTop, s.offW + 4, s.byteTop + kByteHeadH },
+                 wideFromUtf8(s.zh ? "偏移" : "off"), kLabelText);
+    drawLeftText(dc, RECT { s.asciiLeft, s.byteTop, s.clientW - 12, s.byteTop + kByteHeadH },
+                 wideFromUtf8(s.zh ? "ASCII" : "ASCII"), kLabelText);
+    (void)hl;
+    for (int row = 0; row < kByteRows; ++row) {
+        const std::size_t base = (s.scrollRow + static_cast<std::size_t>(row)) * 16;
+        if (base >= s.bytesEval.data.size())
+            break;
+        const int top = s.byteTop + kByteHeadH + row * kByteRowH;
+        SelectObject(dc, mono);
+        RECT off { 12, top, s.offW + 4, top + kByteRowH - 2 };
+        drawLeftText(dc, off, wideFromUtf8(hex4(base).substr(2)), kLabelText);
+        std::string ascii;
+        for (std::size_t c = 0; c < 16 && base + c < s.bytesEval.data.size(); ++c) {
+            const std::size_t idx = base + c;
+            const std::uint8_t bt = s.bytesEval.data[idx];
+            const RECT r = byteCell(idx);
+            const bool selected = idx >= b0 && idx <= b1;
+            HBRUSH fill = CreateSolidBrush(selected ? RGB(52, 76, 104) : kBitOff);
+            FillRect(dc, &r, fill);
+            DeleteObject(fill);
+            frameRect(dc, r, selected ? kFocus : kSeparator);
+            SelectObject(dc, mono);
+            drawCenteredText(dc, r, wideFromUtf8(hex2(bt)), selected ? kBitOnText : kBitOffText);
+            ascii += (bt >= 0x20 && bt <= 0x7E) ? static_cast<char>(bt) : '.';
+        }
+        SelectObject(dc, monoB);
+        RECT ar { s.asciiLeft + 8, top, s.asciiLeft + 8 + static_cast<int>(ascii.size()) * s.monoW + 4, top + kByteRowH - 2 };
+        HBRUSH ab = CreateSolidBrush(kBitOff);
+        FillRect(dc, &ar, ab);
+        DeleteObject(ab);
+        drawLeftText(dc, RECT { ar.left + 4, ar.top, ar.right, ar.bottom }, wideFromUtf8(ascii), kPanelText);
+    }
+    if (!has) {
+        SelectObject(dc, uiFont(12, false, s.zh));
+        RECT t { 0, s.byteTop + 40, s.clientW, s.byteTop + 64 };
+        drawCenteredText(dc, t, wideFromUtf8(s.zh ? "在表达式行粘贴字节，如 hex u16le 34 12 78 56"
+                                                 : "Paste bytes in the expression line, e.g. hex u16le 34 12 78 56"),
+                         kLabelText);
+    }
+    // word readout for the active byte
+    if (has) {
+        const binlab::ByteWord w = wordAt(activeByte());
+        static const char* kNames[3] = { "HEX", "DEC", "BIN" };
+        const char* labels[3] = { "HEX ", s.bytesType.flt ? "FLOAT " : "DEC ", "BIN " };
+        std::string values[3];
+        if (s.bytesType.flt) {
+            values[0] = w.bitsHex;
+            values[1] = w.primary;
+            values[2] = binlab::binPlain(std::strtoull(w.bitsHex.c_str(), nullptr, 16), w.width);
+        } else {
+            const binlab::Repr r = binlab::represent(std::strtoull(w.bitsHex.c_str(), nullptr, 16), w.width,
+                                                     s.bytesType.signedType);
+            values[0] = r.hex;
+            values[1] = r.dec;
+            values[2] = r.bin;
+        }
+        (void)kNames;
+        for (int i = 0; i < 3; ++i)
+            drawBytesChip(dc, s.rcByteChip[i], labels[i], values[i], !w.partial);
+    } else {
+        for (int i = 0; i < 3; ++i)
+            drawBytesChip(dc, s.rcByteChip[i], i == 0 ? "HEX " : i == 1 ? "DEC " : "BIN ", "-", false);
+    }
+    drawSegment(dc, s.rcToBits, wideFromUtf8(s.zh ? "→ 位运算" : "→ Bits"), false);
+    DeleteObject(mono);
+    DeleteObject(monoB);
+}
+
+void paintBytesRecords(HDC dc)
+{
+    EditorState& s = state();
+    HFONT mono = monoFont(12, false);
+    HFONT ui = uiFont(12, false, s.zh);
+    const std::size_t cols = recColumns();
+    const std::size_t fit = recordsFit();
+    const int headerTop = s.byteTop;
+    // Header: the record index plus the format's column names, offset by the
+    // horizontal scroll, so the first visible header cell is always labelled.
+    SelectObject(dc, mono);
+    {
+        int x = static_cast<int>(s.offW) + 8;
+        const int y = headerTop;
+        for (std::size_t c = s.firstCol; c < cols; ++c) {
+            const int w = recColumnWidth(c);
+            if (x >= s.clientW - 12)
+                break;
+            RECT r { x, y, std::min(x + w, s.clientW - 12), y + kByteHeadH };
+            drawLeftText(dc, r, wideFromUtf8(s.recFmt ? s.recFmt->columns[c] : std::to_string(c)), kLabelText);
+            x += w;
+        }
+    }
+    drawLeftText(dc, RECT { 12, headerTop, static_cast<int>(s.offW) + 4, headerTop + kByteHeadH },
+                 wideFromUtf8("#"), kLabelText);
+
+    for (std::size_t row = 0; row < fit; ++row) {
+        const std::size_t rec = s.scrollRow + row;
+        if (rec >= s.recordsEval.records.size())
+            break;
+        const Record& r = s.recordsEval.records[rec];
+        const int top = s.byteTop + kByteHeadH + static_cast<int>(row) * kByteRowH;
+        COLORREF rowBg = kBackground;
+        COLORREF rowFg = kPanelText;
+        if (r.rule >= 0 && s.recFmt) {
+            const RuleSpec& rs = s.recFmt->rules[static_cast<std::size_t>(r.rule)];
+            if (!rs.bg.empty())
+                rowBg = colorFromHex(rs.bg, kBackground);
+            if (!rs.fg.empty())
+                rowFg = colorFromHex(rs.fg, kPanelText);
+        }
+        if (!r.ruleError.empty())
+            rowFg = kErrText;
+        SelectObject(dc, ui);
+        RECT idx { 12, top, static_cast<int>(s.offW) + 4, top + kByteRowH };
+        if (rowBg != kBackground) {
+            HBRUSH b = CreateSolidBrush(rowBg);
+            RECT band { 8, top, s.clientW - 12, top + kByteRowH - 1 };
+            FillRect(dc, &band, b);
+            DeleteObject(b);
+        }
+        drawLeftText(dc, idx, wideFromUtf8(std::to_string(rec)), r.rule >= 0 ? rowFg : kLabelText);
+        SelectObject(dc, mono);
+        for (std::size_t c = s.firstCol; c < cols && c < r.cells.size(); ++c) {
+            const int w = recColumnWidth(c);
+            const int x = recColumnLeft(c);
+            if (x >= s.clientW - 12)
+                break;
+            RECT cell { x + 2, top, std::min(x + w - 2, s.clientW - 12), top + kByteRowH - 1 };
+            const bool selected = rec == s.selRecord && c == s.selField;
+            if (selected) {
+                HBRUSH b = CreateSolidBrush(RGB(52, 76, 104));
+                FillRect(dc, &cell, b);
+                DeleteObject(b);
+                frameRect(dc, cell, kFocus);
+            }
+            drawLeftText(dc, RECT { cell.left + 6, cell.top, cell.right - 2, cell.bottom },
+                         wideFromUtf8(r.cells[c].text), selected ? kBitOnText : rowFg);
+        }
+    }
+    if (s.recordsEval.records.empty()) {
+        SelectObject(dc, ui);
+        RECT t { 0, s.byteTop + 40, s.clientW, s.byteTop + 64 };
+        drawCenteredText(dc, t, wideFromUtf8(s.zh ? "粘贴一条或多条记录：fmt blm_rawdata_256 01 00 …"
+                                                 : "Paste records: fmt blm_rawdata_256 01 00 …"),
+                         kLabelText);
+    }
+    // the selected cell strip
+    const std::string detail = recordCellDetail(s);
+    {
+        HBRUSH b = CreateSolidBrush(kBitOff);
+        FillRect(dc, &s.rcCellChip, b);
+        DeleteObject(b);
+        frameRect(dc, s.rcCellChip, kSeparator);
+        if (!detail.empty()) {
+            SelectObject(dc, ui);
+            std::string line;
+            for (char c : detail)
+                line += (c == '\n' ? ' ' : c);
+            RECT t { s.rcCellChip.left + 8, s.rcCellChip.top, s.rcCellChip.right - 8, s.rcCellChip.bottom };
+            drawLeftText(dc, t, wideFromUtf8(line), kPanelText);
+        }
+    }
+    drawSegment(dc, s.rcToBits, wideFromUtf8(s.zh ? "→ 位运算" : "→ Bits"), false);
+    DeleteObject(mono);
+    DeleteObject(ui);
+}
+
+void paintBytesFormatDropdown(HDC dc)
+{
+    EditorState& s = state();
+    if (!s.formatOpen || !s.formats)
+        return;
+    HFONT mono = monoFont(12, false);
+    HFONT ui = uiFont(11, false, s.zh);
+    const std::size_t n = std::min<std::size_t>(kFormatRows, s.formats->entries.size());
+    if (n == 0) {
+        RECT r = s.rcFormatBtn;
+        r.top = r.bottom + 2;
+        r.bottom = r.top + kFormatRowH;
+        HBRUSH b = CreateSolidBrush(RGB(20, 24, 30));
+        FillRect(dc, &r, b);
+        DeleteObject(b);
+        frameRect(dc, r, RGB(90, 110, 130));
+        SelectObject(dc, ui);
+        drawLeftText(dc, RECT { r.left + 8, r.top, r.right - 8, r.bottom },
+                     wideFromUtf8(s.zh ? "未加载任何格式" : "no formats loaded"), kLabelText);
+        DeleteObject(mono);
+        DeleteObject(ui);
+        return;
+    }
+    RECT panel { s.rcFormatItem[0].left - 2, s.rcFormatItem[0].top - 2,
+                 s.rcFormatItem[n - 1].right + 2, s.rcFormatItem[n - 1].bottom + 2 };
+    HBRUSH pb = CreateSolidBrush(RGB(20, 24, 30));
+    FillRect(dc, &panel, pb);
+    DeleteObject(pb);
+    frameRect(dc, panel, RGB(90, 110, 130));
+    for (std::size_t i = 0; i < n; ++i) {
+        const FormatEntry& e = s.formats->entries[i];
+        const RECT r = s.rcFormatItem[i];
+        if (e.ok && s.recFmt && e.name == s.recFmt->name) {
+            HBRUSH hl = CreateSolidBrush(RGB(50, 62, 76));
+            FillRect(dc, &r, hl);
+            DeleteObject(hl);
+        }
+        SelectObject(dc, e.ok ? mono : ui);
+        RECT t { r.left + 8, r.top, r.right - 8, r.bottom };
+        const std::string text = e.ok ? e.name : (e.source + (s.zh ? " · 加载失败" : " · failed"));
+        drawLeftText(dc, t, wideFromUtf8(text), e.ok ? kPanelText : kErrText);
+    }
+    DeleteObject(mono);
+    DeleteObject(ui);
+}
+
+// ---- bytes actions -------------------------------------------------------------
+
+// Rewrite the type token inside a scalar expression (prefix + data). Returns
+// false when there is no type token to rewrite.
+bool rewriteScalarType(const std::string& newType)
+{
+    const std::vector<std::string> tokens = binlab::splitWhitespace(expressionText());
+    if (tokens.size() < 2 || binlab::lower(tokens[0]) == "fmt")
+        return false;
+    replaceExpression(tokens[0] + " " + newType + " " + joinTokens(std::vector<std::string>(tokens.begin() + 2, tokens.end())));
+    return true;
+}
+
+// Rewrite the fmt order word: `fmt NAME lsb HEX...` -> `fmt NAME msb HEX...`.
+void rewriteOrder(bool msb)
+{
+    EditorState& s = state();
+    const std::vector<std::string> tokens = binlab::splitWhitespace(expressionText());
+    if (tokens.size() < 2)
+        return;
+    std::vector<std::string> out { tokens[0], tokens[1] };
+    std::size_t at = 2;
+    if (at < tokens.size() && isOrderWord(tokens[at]))
+        ++at;
+    out.push_back(msb ? "msb" : "lsb");
+    for (std::size_t i = at; i < tokens.size(); ++i)
+        out.push_back(tokens[i]);
+    s.suppressEval = true;
+    replaceExpression(joinTokens(out));
+    s.suppressEval = false;
+    evaluateBytes();
+    showMsg(s.hwnd, s.zh ? (msb ? "记录序：msb-first" : "记录序：lsb-first")
+                         : (msb ? "record order: msb-first" : "record order: lsb-first"));
+    winshun::debug(std::string("ra9fael.binarylab: setOrder ") + (msb ? "msb" : "lsb"));
+}
+
+void chooseFormat(const FormatEntry& e)
+{
+    EditorState& s = state();
+    s.formatOpen = false;
+    if (!e.ok) {
+        showMsg(s.hwnd, e.error);
+        return;
+    }
+    const std::vector<std::string> tokens = binlab::splitWhitespace(expressionText());
+    std::vector<std::string> out { "fmt", e.name };
+    std::size_t at = 2;
+    if (tokens.size() > 2 && isOrderWord(tokens[2]))
+        at = 3;
+    if (tokens.size() > at) {
+        bool msb = s.recordsHas ? s.recordsEval.msbFirst : true;
+        for (std::size_t i = 2; i < tokens.size(); ++i)
+            if (isOrderWord(tokens[i])) {
+                msb = binlab::lower(tokens[i]).rfind("msb", 0) == 0;
+                break;
+            }
+        out.push_back(msb ? "msb" : "lsb");
+        for (std::size_t i = at; i < tokens.size(); ++i)
+            out.push_back(tokens[i]);
+    }
+    replaceExpression(joinTokens(out));
+    winshun::debug("ra9fael.binarylab: setFormat " + e.name);
+}
+
+// Scalar toolbar: width / signedness / float kind / endian. Each rewrites the
+// type word and re-derives the whole page from the same bytes.
+void setScalarType(HWND hwnd, int width, int kind, bool endianBe)
+{
+    EditorState& s = state();
+    const std::string oldEndian = s.endian;
+    if (endianBe != (s.endian == "be"))
+        s.endian = endianBe ? "be" : "le";
+    if (kind >= 0 && width > 0) {
+        std::string name = kind == 2 ? (width == 16 ? "f16" : width == 32 ? "f32" : "f64")
+                                     : binlab::typeNameFor(width, kind == 1);
+        rewriteScalarType(name + s.endian);
+        showMsg(hwnd, s.zh ? "类型改写为 " + name + " " + s.endian : "type rewritten to " + name + " " + s.endian);
+        return;
+    }
+    if (oldEndian != s.endian) {
+        // The endian lives in the expression's type suffix, so the rewrite
+        // keeps the line and the readout in agreement (u16le -> u16be).
+        const std::vector<std::string> tokens = binlab::splitWhitespace(expressionText());
+        bool signedTmp = false;
+        int widthTmp = 0;
+        if (tokens.size() >= 2 && !binlab::isBitsType(tokens[1], widthTmp, signedTmp)) {
+            // tokens[1] is not a plain int name (float or suffixed): rewrite it.
+            std::string base = tokens[1];
+            if (base.size() > 2 && (base.compare(base.size() - 2, 2, "le") == 0
+                                    || base.compare(base.size() - 2, 2, "be") == 0))
+                base = base.substr(0, base.size() - 2);
+            rewriteScalarType(base + s.endian);
+        }
+        winshun::debug(std::string("ra9fael.binarylab: setBytesEndian ") + s.endian);
+        evaluateBytes();
+        showMsg(hwnd, s.zh ? "端序：" + std::string(s.endian == "be" ? "BE" : "LE")
+                           : "endian: " + std::string(s.endian == "be" ? "BE" : "LE"));
+        return;
+    }
+    evaluateBytes();
+}
+
+// "→ 位运算": carry the active word into the bits page as `u<width> 0x…`.
+void sendToBits(HWND hwnd)
+{
+    EditorState& s = state();
+    if (s.bytesIsRecords) {
+        if (!s.recordsHas || !s.recFmt || s.recordsEval.records.empty() || s.selField >= recColumns())
+            return;
+        const Record& r = s.recordsEval.records[std::min(s.selRecord, s.recordsEval.records.size() - 1)];
+        const Cell& c = r.cells[s.selField];
+        std::string expr;
+        if (c.kind == Cell::Float)
+            expr = "f64 " + binlab::hexUpper(c.bits, 64);
+        else if (c.kind == Cell::Signed)
+            expr = "u64 " + binlab::hexUpper(c.bits, 64);
+        else
+            expr = "u64 " + binlab::hexUpper(c.u, 64);
+        replaceExpression(expr);
+        evaluate();
+        s.mode = EditorSpec::Mode::Bits;
+        s.editOwner = EditorSpec::Mode::Bits;
+        relayout(hwnd);
+        winshun::debug("ra9fael.binarylab: sendToBits from records: " + expr);
+        return;
+    }
+    if (!s.scalarHas || s.bytesEval.data.empty())
+        return;
+    const binlab::ByteWord w = wordAt(activeByte());
+    const std::string expr = (s.bytesType.flt ? std::string(s.bytesType.flt->name) : binlab::typeNameFor(w.width, false))
+                           + " 0x" + w.bitsHex.substr(2);
+    replaceExpression(expr);
+    evaluate();
+    s.mode = EditorSpec::Mode::Bits;
+    s.editOwner = EditorSpec::Mode::Bits;
+    relayout(hwnd);
+    winshun::debug("ra9fael.binarylab: sendToBits: " + expr);
+}
+
+void bytesClick(HWND hwnd, int x, int y)
+{
+    EditorState& s = state();
+    // toolbar
+    if (s.bytesIsRecords) {
+        for (int i = 0; i < 2; ++i) {
+            if (inRect(s.rcOrder[i], x, y)) {
+                rewriteOrder(i == 1);
+                return;
+            }
+        }
+        if (inRect(s.rcFormatBtn, x, y)) {
+            s.formatOpen = !s.formatOpen;
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return;
+        }
+        for (std::size_t i = 0; i < kFormatRows && s.formats && i < s.formats->entries.size(); ++i) {
+            if (inRect(s.rcFormatItem[i], x, y)) {
+                chooseFormat(s.formats->entries[i]);
+                return;
+            }
+        }
+        std::size_t rec = 0, col = 0;
+        if (hitRecordCell(x, y, rec, col)) {
+            s.selRecord = rec;
+            s.selField = col;
+            logLayout(); // the drive scripts read selection state from this line
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return;
+        }
+        if (inRect(s.rcToBits, x, y)) {
+            sendToBits(hwnd);
+            return;
+        }
+        if (s.formatOpen) {
+            s.formatOpen = false;
+            InvalidateRect(hwnd, nullptr, TRUE);
+        }
+        return;
+    }
+    static const int kWidths[4] = { 8, 16, 32, 64 };
+    for (int i = 0; i < 4; ++i) {
+        if (inRect(s.rcWidthBtn[i], x, y)) {
+            setScalarType(hwnd, kWidths[i], -1, s.endian == "be");
+            return;
+        }
+    }
+    for (int i = 0; i < 3; ++i) {
+        if (inRect(s.rcKindBtn[i], x, y)) {
+            const int w = i == 2 ? (binlab::floatByBits(s.bytesType.size * 8)
+                                       ? s.bytesType.size * 8
+                                       : 32)
+                                 : s.bytesType.size * 8;
+            if (i == 2 && binlab::floatByBits(w) == nullptr) {
+                showMsg(hwnd, s.zh ? std::to_string(w) + " 位没有 IEEE-754 容器"
+                                   : std::to_string(w) + "-bit has no IEEE-754 container");
+                return;
+            }
+            setScalarType(hwnd, w, i, s.endian == "be");
+            return;
+        }
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (inRect(s.rcEndian[i], x, y)) {
+            setScalarType(hwnd, -1, -1, i == 1);
+            return;
+        }
+    }
+    for (int i = 0; i < 3; ++i) {
+        if (inRect(s.rcByteChip[i], x, y) && s.scalarHas && !s.bytesEval.data.empty()) {
+            const binlab::ByteWord w = wordAt(activeByte());
+            const char* names[3] = { "HEX", s.bytesType.flt ? "FLOAT" : "DEC", "BIN" };
+            const std::string text = i == 0 ? w.bitsHex : i == 1 ? w.primary
+                : binlab::binPlain(std::strtoull(w.bitsHex.c_str(), nullptr, 16), w.width);
+            if (copyToClipboard(hwnd, text)) {
+                s.msg = s.zh ? std::string("已复制 ") + names[i] : std::string("Copied ") + names[i];
+                s.msgTick = GetTickCount();
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return;
+        }
+    }
+    if (inRect(s.rcToBits, x, y)) {
+        sendToBits(hwnd);
+        return;
+    }
+    const std::size_t idx = hitByte(x, y);
+    if (idx != SIZE_MAX) {
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
+            s.selActive = idx; // extend
+        else {
+            s.selAnchor = idx;
+            s.selActive = idx;
+        }
+        s.byteDrag = true;
+        logLayout(); // the drive scripts read selection state from this line
+        InvalidateRect(hwnd, nullptr, TRUE);
+    }
+}
+
+// @@BYTES_NEXT@@
 
 // ---- content-area panels (settings / help tabs) ---------------------------
 // These replace the old floating overlays: they occupy the whole content area
@@ -1911,18 +3064,20 @@ void paint(HWND hwnd)
     }
 
     // ---- expression row ----
-    if (bits) {
+    if (bits || s.mode == EditorSpec::Mode::Bytes) {
         SelectObject(mem, exprLabelFont);
         RECT lab { 12, kTopH, 62, kTopH + kExprH };
         drawLeftText(mem, lab, wideFromUtf8(s.zh ? "表达式" : "Expr"), kLabelText);
         RECT border { s.rcExpr.left - 3, s.rcExpr.top - 3, s.rcExpr.right + 3, s.rcExpr.bottom + 3 };
         frameRect(mem, border, kSeparator);
-        RECT hb = s.rcHistoryBtn;
-        HBRUSH hbg = CreateSolidBrush(s.historyOpen ? kAccent : kOverlay);
-        FillRect(mem, &hb, hbg);
-        DeleteObject(hbg);
-        frameRect(mem, hb, s.historyOpen ? kAccent : RGB(80, 90, 102));
-        drawCenteredText(mem, hb, L"\u25BE", s.historyOpen ? kBitOnText : kPanelText);
+        if (bits) {
+            RECT hb = s.rcHistoryBtn;
+            HBRUSH hbg = CreateSolidBrush(s.historyOpen ? kAccent : kOverlay);
+            FillRect(mem, &hb, hbg);
+            DeleteObject(hbg);
+            frameRect(mem, hb, s.historyOpen ? kAccent : RGB(80, 90, 102));
+            drawCenteredText(mem, hb, L"\u25BE", s.historyOpen ? kBitOnText : kPanelText);
+        }
     }
 
     // ---- result chips ----
@@ -2035,11 +3190,17 @@ void paint(HWND hwnd)
         paintSettingsContent(mem);
     } else if (s.mode == EditorSpec::Mode::Help) {
         paintHelpContent(mem);
+    } else if (s.mode == EditorSpec::Mode::Bytes) {
+        paintBytesToolbar(mem);
+        measureColumns(mem);
+        if (s.bytesIsRecords)
+            paintBytesRecords(mem);
+        else
+            paintBytesScalar(mem);
+        paintBytesFormatDropdown(mem);
     } else {
         SelectObject(mem, statusFont);
-        const std::string line1 = s.mode == EditorSpec::Mode::Bytes
-            ? (s.zh ? "字节流交互界面随 v0.3b 提供" : "The interactive byte viewer arrives in v0.3b")
-            : (s.zh ? "结构体交互界面随 v0.3c 提供" : "The interactive struct viewer arrives in v0.3c");
+        const std::string line1 = (s.zh ? "结构体交互界面随 v0.3c 提供" : "The interactive struct viewer arrives in v0.3c");
         const std::string line2 = s.zh ? "当前可继续使用查询行的 bytes / struct 命令"
                                        : "The bytes / struct query keywords stay available";
         RECT l1 { 0, s.gridTop + 20, w, s.gridTop + 44 };
@@ -2083,8 +3244,7 @@ void paint(HWND hwnd)
             left = binlab::typeNameFor(s.width, s.isSigned) + " · " + std::to_string(s.width) + " bit · "
                  + (s.isSigned ? (s.zh ? "有符号" : "signed") : (s.zh ? "无符号" : "unsigned"));
     } else if (s.mode == EditorSpec::Mode::Bytes) {
-        left = s.zh ? "字节流 · 端序 " : "bytes · endian ";
-        left += s.endian == "be" ? "BE" : "LE";
+        left = bytesStatusLeft(s);
     } else if (s.mode == EditorSpec::Mode::Struct) {
         left = std::string("pack=") + (s.pack == 0 ? "natural" : std::to_string(s.pack));
     } else if (s.mode == EditorSpec::Mode::Settings) {
@@ -2136,7 +3296,8 @@ void paint(HWND hwnd)
             drawParityChip(mem, s.rcParity[i], wideFromUtf8(labels[i]), wideFromUtf8(pv[i]));
     } else {
         const std::string hint = s.mode == EditorSpec::Mode::Bytes
-            ? (s.zh ? "校验面板随 v0.3b 提供" : "Checksum panel arrives in v0.3b")
+            ? (s.bytesIsRecords ? (s.zh ? "点击格子选中 · 滚轮翻页 · Shift+←→ 横向滚动" : "click selects · wheel pages · Shift+arrows scroll")
+                                : (s.zh ? "拖动选字节 · 点芯片复制 · → 位运算带过去" : "drag selects bytes · chips copy · → Bits hands off"))
             : s.mode == EditorSpec::Mode::Struct
                 ? (s.zh ? "结构体交互随 v0.3c 提供" : "Interactive struct viewer arrives in v0.3c")
                 : s.mode == EditorSpec::Mode::Settings
@@ -2270,8 +3431,12 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_COMMAND:
-        if (HIWORD(wp) == EN_CHANGE && reinterpret_cast<HWND>(lp) == state().edit)
-            evaluate();
+        if (HIWORD(wp) == EN_CHANGE && reinterpret_cast<HWND>(lp) == state().edit) {
+            if (state().mode == EditorSpec::Mode::Bytes)
+                evaluateBytes();
+            else
+                evaluate();
+        }
         return 0;
     case WM_LBUTTONDOWN: {
         EditorState& s = state();
@@ -2299,12 +3464,33 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         for (int i = 0; i < 5; ++i) {
             if (inRect(s.rcTabs[i], x, y)) {
-                s.mode = static_cast<EditorSpec::Mode>(i);
+                const EditorSpec::Mode next = static_cast<EditorSpec::Mode>(i);
+                if (next != s.mode) {
+                    // The two content modes share one EDIT control; each keeps
+                    // its own text across the switch.
+                    if (s.editOwner == EditorSpec::Mode::Bits)
+                        s.bitsExpr = expressionText();
+                    else if (s.editOwner == EditorSpec::Mode::Bytes)
+                        s.bytesExpr = expressionText();
+                    s.mode = next;
+                    if (next == EditorSpec::Mode::Bits || next == EditorSpec::Mode::Bytes) {
+                        s.editOwner = next;
+                        s.suppressEval = true;
+                        SetWindowTextW(s.edit, wideFromUtf8(next == EditorSpec::Mode::Bits ? s.bitsExpr : s.bytesExpr).c_str());
+                        s.suppressEval = false;
+                        if (next == EditorSpec::Mode::Bytes)
+                            evaluateBytes();
+                        else
+                            evaluate();
+                    }
+                }
                 s.focusBit = -1;
                 s.dragging = false;
+                s.byteDrag = false;
                 s.hoverParity = -1;
                 s.hoverSeg = -1;
                 s.historyOpen = false;
+                s.formatOpen = false;
                 relayout(hwnd);
                 return 0;
             }
@@ -2336,6 +3522,10 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         if (s.mode == EditorSpec::Mode::Help)
             return 0;
+        if (s.mode == EditorSpec::Mode::Bytes) {
+            bytesClick(hwnd, x, y);
+            return 0;
+        }
         if (s.mode == EditorSpec::Mode::Bits) {
             if (inRect(s.rcHistoryBtn, x, y)) {
                 s.historyOpen = !s.historyOpen;
@@ -2395,6 +3585,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 s.dragPaint = getBit(s.value, bit) ? 0 : 1;
                 s.dragging = true;
                 setBit(s.value, s.width, bit, s.dragPaint);
+                refreshFloatReadout();
                 InvalidateRect(hwnd, nullptr, TRUE);
             }
         }
@@ -2406,9 +3597,19 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const int y = static_cast<int>(HIWORD(lp));
         if (s.dragging) {
             const int bit = hitBit(x, y);
-            if (bit >= 0)
+            if (bit >= 0) {
                 setBit(s.value, s.width, bit, s.dragPaint);
+                refreshFloatReadout();
+            }
             InvalidateRect(hwnd, nullptr, TRUE);
+        }
+        if (s.mode == EditorSpec::Mode::Bytes && s.byteDrag && !s.bytesIsRecords && s.scalarHas) {
+            const std::size_t idx = hitByte(x, y);
+            if (idx != SIZE_MAX && idx != s.selActive) {
+                s.selActive = idx;
+                logLayout(); // keep the drive scripts on the newest selection
+                InvalidateRect(hwnd, nullptr, TRUE);
+            }
         }
         int hover = -1;
         int seg = -1;
@@ -2433,15 +3634,41 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
+    case WM_MOUSEWHEEL: {
+        EditorState& s = state();
+        if (s.mode != EditorSpec::Mode::Bytes)
+            return 0;
+        const int delta = static_cast<short>(HIWORD(wp));
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0 && s.bytesIsRecords && !s.recordsEval.records.empty()) {
+            // horizontal scroll: one column per notch, clamped to the last column that shows
+            std::size_t fc = s.firstCol;
+            if (delta < 0 && s.firstCol + 1 < recColumns())
+                fc = s.firstCol + 1;
+            else if (delta > 0)
+                fc = s.firstCol > 0 ? s.firstCol - 1 : 0;
+            s.firstCol = fc;
+        } else {
+            const std::size_t step = delta < 0 ? 1 : (s.scrollRow > 0 ? 1 : 0);
+            if (delta > 0)
+                s.scrollRow = s.scrollRow > 0 ? s.scrollRow - 1 : 0;
+            else if (delta < 0)
+                s.scrollRow = std::min(s.scrollRow + 1, maxScrollRow());
+            (void)step;
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    }
     case WM_LBUTTONUP:
         state().dragging = false;
+        state().byteDrag = false;
         return 0;
     case WM_KEYDOWN: {
         EditorState& s = state();
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         if (wp == VK_ESCAPE) {
-            if (s.historyOpen) {
+            if (s.historyOpen || s.formatOpen) {
                 s.historyOpen = false;
+                s.formatOpen = false;
                 InvalidateRect(hwnd, nullptr, TRUE);
                 return 0;
             }
@@ -2454,6 +3681,14 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (ctrl) {
+            if (s.mode == EditorSpec::Mode::Bytes) {
+                if ((wp == 'C' || wp == 'c') && s.scalarHas && !s.bytesEval.data.empty()) {
+                    const std::string sel = selectionSummary(s);
+                    if (!sel.empty() && copyToClipboard(hwnd, sel))
+                        showMsg(hwnd, s.zh ? "已复制选区" : "copied selection");
+                }
+                return 0;
+            }
             if (wp == 'C' || wp == 'c') { copyBase(hwnd, 'H', "HEX"); return 0; }
             if (wp == 'O' || wp == 'o') { copyBase(hwnd, 'O', "OCT"); return 0; }
             if (wp == 'B' || wp == 'b') { copyBase(hwnd, 'B', "BIN"); return 0; }
@@ -2463,7 +3698,29 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == VK_SPACE) {
             if (s.focusBit >= 0) {
                 setBit(s.value, s.width, s.focusBit, getBit(s.value, s.focusBit) ? 0 : 1);
+                refreshFloatReadout();
                 InvalidateRect(hwnd, nullptr, TRUE);
+            }
+            return 0;
+        }
+        if (s.mode == EditorSpec::Mode::Bytes) {
+            if (!s.bytesIsRecords && s.scalarHas && !s.bytesEval.data.empty()
+                && (wp == VK_LEFT || wp == VK_RIGHT || wp == VK_UP || wp == VK_DOWN)) {
+                const bool extend = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                std::size_t a = extend ? s.selActive : s.selActive;
+                if (wp == VK_LEFT && a > 0) --a;
+                else if (wp == VK_RIGHT && a + 1 < s.bytesEval.data.size()) ++a;
+                else if (wp == VK_UP && a >= 16) a -= 16;
+                else if (wp == VK_DOWN && a + 16 < s.bytesEval.data.size()) a += 16;
+                s.selActive = a;
+                if (!extend) s.selAnchor = a;
+                // keep the active byte on screen
+                if (a / 16 < s.scrollRow)
+                    s.scrollRow = a / 16;
+                if (a / 16 >= s.scrollRow + bytesFitRows())
+                    s.scrollRow = a / 16 - bytesFitRows() + 1;
+                InvalidateRect(hwnd, nullptr, TRUE);
+                return 0;
             }
             return 0;
         }
@@ -2528,6 +3785,24 @@ void threadMain(EditorSpec spec)
     s.historyPersistent = true;
     loadHistory();
 
+    // bytes page state (v0.3b)
+    s.formats = spec.formats;
+    s.bitsExpr.clear();
+    s.bytesExpr.clear();
+    s.editOwner = spec.mode;
+    s.scalarHas = false;
+    s.recordsHas = false;
+    s.bytesIsRecords = false;
+    s.recFmt = nullptr;
+    s.selAnchor = 0;
+    s.selActive = 0;
+    s.byteDrag = false;
+    s.scrollRow = 0;
+    s.firstCol = 0;
+    s.selRecord = 0;
+    s.selField = 0;
+    s.formatOpen = false;
+
     ensureDpiAwareness();
 
     WNDCLASSW wc {};
@@ -2585,7 +3860,10 @@ void threadMain(EditorSpec spec)
         std::wstring initial = wideFromUtf8("0x" + std::string((spec.width + 3) / 4, '0'));
         SetWindowTextW(s.edit, initial.c_str());
     }
-    evaluate();
+    if (spec.mode == EditorSpec::Mode::Bytes)
+        evaluateBytes();
+    else
+        evaluate();
 
     logLayout();
     ShowWindow(hwnd, SW_SHOWNORMAL);
