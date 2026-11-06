@@ -196,7 +196,8 @@ WM_SETTEXT, WM_GETTEXT = 0x000C, 0x000D
 
 send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
       "params": {"protocolVersion": "1", "winshun": "0.7.0", "pluginDir": ".", "dataDir": DATA_DIR,
-                 "locale": "zh", "theme": "dark", "settings": {}}})
+                 "locale": "zh", "theme": "dark",
+                 "settings": {"formatDir": str(ROOT / "tests" / "fixtures")}}})
 recv(1)
 # ---- 0: `bits ` with no words must offer a REAL, actionable first row ----
 # The host sends command=bits, text="", raw="bits " for a keyword + space.
@@ -689,10 +690,156 @@ assert txt == "f32 0xBFC00000", f"i -> f keeps the bits, got {txt!r}"
 assert copy_chip(lay_k, 3) == "-1.5", "the same bits read back as -1.5"
 assert shoot(PNG_KIND)
 user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
+time.sleep(0.5)
+
+# ---- 7l: a bit edit re-decodes the FLOAT readout ------------------------------
+# Painting bits used to leave floatText at the value the expression produced, so
+# an all-ones pattern still read 1.2.
+user32.SendMessageW(edit, WM_SETTEXT, 0, "f32 1.5")
+time.sleep(0.6)
+lay_r = newest()
+assert copy_chip(lay_r, 3) == "1.5", "f32 1.5 reads back as 1.5"
+gl, gt = int(lay_r["gridLeft"]), int(lay_r["gridTop"])
+cell = int(lay_r["cellW"])
+post_click(hwnd, gl + 7 * cell + 8 + cell // 2, gt + 3 * 52 + 14 + 16)  # bit 0
+time.sleep(0.5)
+assert copy_chip(lay_r, 0) == "0x3FC00001", "bit 0 of the mantissa toggles"
+assert copy_chip(lay_r, 3) == "1.5000001", "FLOAT follows the edited bits"
+user32.SendMessageW(edit, WM_SETTEXT, 0, "f32 0xFFFFFFFF")
+time.sleep(0.5)
+assert copy_chip(lay_r, 3) == "NaN", "an all-ones exponent reads NaN, not a stale number"
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
 time.sleep(2.3)
 
 # ---- 8: final screenshot and clean shutdown ----
 assert shoot(PNG_BITS)
+# ---- 8: the bytes page (scalar + record formats) -----------------------------
+# Reopens the window from bytes rows; the page owns its own expression text.
+PNG_BYTES_SCALAR = str(OUT / "bytes_scalar.png")
+PNG_BYTES_RECORDS = str(OUT / "bytes_records.png")
+BYTE_HEAD = 18  # header line above the 8 data rows
+
+
+def click_byte(d, idx):
+    off_w, bw, top = int(d["offW"]), int(d["byteW"]), int(d["byteTop"])
+    col, row = idx % 16, idx // 16
+    x = off_w + 8 + col * bw + (8 if col >= 8 else 0) + bw // 2
+    y = top + BYTE_HEAD + row * 20 + 10
+    post_click(hwnd, x, y)
+
+
+def bytes_lay(min_seen):
+    return layout(min_seen)
+
+
+def open_bytes(expr, rid):
+    global hwnd, eb
+    n_before = len([l for l in stderr_lines if "layout:" in l])
+    send({"jsonrpc": "2.0", "id": rid, "method": "query",
+          "params": {"queryId": rid, "command": "bytes", "trigger": "keyword", "keyword": "bytes",
+                     "text": expr, "raw": "bytes " + expr, "limit": 200}})
+    items = recv(rid)["result"]["items"]
+    assert items[0]["id"] == "bytes.open.workbench", f"first bytes row must be the workbench entry: {items[0]['id']}"
+    send({"jsonrpc": "2.0", "id": rid + 1, "method": "action",
+          "params": {"command": "bytes", "action": "openEditor", "item": items[0], "text": "bytes " + expr}})
+    recv(rid + 1)
+    time.sleep(1.2)
+    hwnd = user32.FindWindowW("WinShunBinaryLabEditor", None)
+    assert hwnd, "the bytes entry must open the editor window"
+    eb = user32.FindWindowExW(hwnd, None, "EDIT", None)
+    return bytes_lay(n_before)
+
+
+lay_b = open_bytes("hex u16le 34 12 78 56", 300)
+assert int(lay_b["mode"]) == 1 and lay_b["bytesMode"] == "scalar", "bytes page opens in scalar mode"
+assert int(lay_b["clientH"]) == int(lay_b["statusTop"]) + 46, "bytes page keeps the two-row status bar"
+assert edit_text(eb) == "hex u16le 34 12 78 56", f"expression carried over: {edit_text(eb)!r}"
+
+# click byte #2 (0x78): the u16le word there is 78 56 -> 0x5678
+click_byte(lay_b, 2)
+time.sleep(0.4)
+lay_b = bytes_lay(0)
+assert lay_b["selBegin"] == "2" and lay_b["selEnd"] == "2", "single click selects one byte"
+l, t, w, h = rect(lay_b, "chip0")
+post_click(hwnd, l + w // 2, t + h // 2)
+time.sleep(0.35)
+assert read_clipboard() == "0x5678", f"word readout must be LE: got {read_clipboard()!r}"
+
+# BE rewrites the suffix and re-reads the same bytes
+l, t, w, h = rect(lay_b, "endianBtn1")
+post_click(hwnd, l + w // 2, t + h // 2)
+time.sleep(0.4)
+lay_b = bytes_lay(0)
+assert edit_text(eb) == "hex u16be 34 12 78 56", f"BE must rewrite the suffix: {edit_text(eb)!r}"
+assert lay_b["endian"] == "be", "state endian follows the click"
+l, t, w, h = rect(lay_b, "chip0")
+post_click(hwnd, l + w // 2, t + h // 2)
+time.sleep(0.35)
+assert read_clipboard() == "0x7856", f"BE word readout: got {read_clipboard()!r}"
+# back to LE
+l, t, w, h = rect(lay_b, "endianBtn0")
+post_click(hwnd, l + w // 2, t + h // 2)
+time.sleep(0.4)
+lay_b = bytes_lay(0)
+assert lay_b["endian"] == "le" and edit_text(eb) == "hex u16le 34 12 78 56", "back to LE"
+
+# drag a two-byte selection: selBegin/selEnd follow in the layout log
+lp = (int(lay_b["byteTop"]) + BYTE_HEAD + 10) << 16 | (int(lay_b["offW"]) + 8 + 1 * int(lay_b["byteW"]) + 8)
+user32.PostMessageW(hwnd, 0x0201, 1, lp)
+mp = (int(lay_b["byteTop"]) + BYTE_HEAD + 10) << 16 | (int(lay_b["offW"]) + 8 + 2 * int(lay_b["byteW"]) + 8)
+user32.PostMessageW(hwnd, 0x0200, 0, mp)
+user32.PostMessageW(hwnd, 0x0202, 0, mp)
+time.sleep(0.4)
+lay_b = bytes_lay(0)
+assert lay_b["selBegin"] == "1" and lay_b["selEnd"] == "2", f"drag selection: {lay_b['selBegin']}..{lay_b['selEnd']}"
+assert shoot(PNG_BYTES_SCALAR)
+
+# -> Bits carries the word at the active byte
+tl, tt, tw_, th = rect(lay_b, "toBits")
+post_click(hwnd, tl + tw_ // 2, tt + th // 2)
+time.sleep(0.6)
+lay_bits2 = bytes_lay(0)
+assert int(lay_bits2["mode"]) == 0, "toBits opens the bits page"
+assert edit_text(eb) == "u16 0x5678", f"bits expression from the word: {edit_text(eb)!r}"
+
+# ---- record formats on the bytes page ----------------------------------------
+rec = "01 00 00 00 02 00 00 00 fb ff 02 00 03 00 04 00 05 00 06 00 09 00 00 00 00 00 00 00 00 00 00 00"
+lay_r = open_bytes(f"fmt blm_rawdata_256 lsb {rec} {rec} aa", 310)
+assert int(lay_r["mode"]) == 1 and lay_r["bytesMode"] == "records", "fmt switches to the records view"
+assert lay_r["selRecord"] == "0" and lay_r["selField"] == "0", "selection starts at #0"
+tl, tt, tw_, th = rect(lay_r, "table")
+assert th > 0, "table has geometry"
+# click the integral0 column of record #0: columns are measured from column texts
+mono, off_w = int(lay_r["monoW"]), int(lay_r["offW"])
+w0 = len("wr_time_s") * mono + 24
+w1 = len("wr_time_ns") * mono + 24
+x = off_w + 8 + w0 + w1 + 30
+y = int(lay_r["byteTop"]) + BYTE_HEAD + 10
+post_click(hwnd, x, y)
+time.sleep(0.4)
+lay_r = bytes_lay(0)
+assert lay_r["selField"] == "2" and lay_r["selRecord"] == "0", f"cell click: {lay_r['selField']}"
+cl, ct, cw, ch = rect(lay_r, "cellChip")
+assert cw > 0, "the selected cell strip has geometry"
+
+# MSB rewrites the order word and changes the values
+assert edit_text(eb).startswith("fmt blm_rawdata_256 lsb "), f"order word before MSB: {edit_text(eb)!r}"
+ol, ot, ow, oh = rect(lay_r, "ord1")
+post_click(hwnd, ol + ow // 2, ot + oh // 2)
+time.sleep(0.5)
+lay_r = bytes_lay(0)
+assert edit_text(eb).startswith("fmt blm_rawdata_256 msb "), f"order word after MSB: {edit_text(eb)!r}"
+assert any("setOrder msb" in l for l in stderr_lines), "MSB click logged"
+assert shoot(PNG_BYTES_RECORDS)
+
+# the format dropdown lists every entry, broken files in red
+fl, ft, fw, fh = rect(lay_r, "fmtBtn")
+post_click(hwnd, fl + fw // 2, ft + fh // 2)
+time.sleep(0.4)
+assert shoot(str(OUT / "bytes_formats.png"))
+post_key(hwnd, VK_ESCAPE)
+time.sleep(0.3)
+
 send({"jsonrpc": "2.0", "id": 99, "method": "shutdown", "params": {}})
 recv(99)
 p.stdin.close()
