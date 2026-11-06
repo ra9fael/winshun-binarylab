@@ -9,7 +9,8 @@
 #      with no "close the overlay first" click
 #   5. full untruncated parse error in status row 2
 #   6. full-precedence expressions and the session fixed/C eval-mode switch
-#   7. screenshots and clean exit 0
+#   7. float composition bar: toggle, S/E/M copy, f16, ghost and no-container
+#   8. screenshots and clean exit 0
 #
 # Geometry comes from the plugin's stderr "layout:" debug lines; a daemon
 # thread accumulates every stderr line so nothing is lost between steps.
@@ -38,6 +39,8 @@ PNG_HOVER = str(OUT / "workbench_hover.png")
 PNG_BLANK = str(OUT / "workbench_blank.png")
 PNG_HISTORY = str(OUT / "workbench_history.png")
 PNG_FLOAT = str(OUT / "workbench_float.png")
+PNG_FLOATBAR = str(OUT / "workbench_floatbar.png")
+PNG_GHOST = str(OUT / "workbench_floatbar_ghost.png")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -542,6 +545,80 @@ assert any("setEvalMode fixed" in l for l in stderr_lines), "fixed-mode click"
 assert layout(n)["cmode"] == "0", "settings panel must report cmode=0"
 
 user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
+time.sleep(0.5)
+
+# ---- 7j: float composition bar ---------------------------------------------
+# Off by default (settings={}): no bar row, no segment rects.
+lay_nb = layout(0)
+assert lay_nb["floatbar"] == "0" and lay_nb["barTop"] == "0", "bar starts hidden"
+h_off = int(lay_nb["clientH"])
+
+
+def bar_copy(d, idx):
+    click_rect(d, f"bar{idx}")
+    time.sleep(0.35)
+    return read_clipboard()
+
+
+user32.SendMessageW(edit, WM_SETTEXT, 0, "f32 1.5")
+time.sleep(0.5)
+n = n_layouts()
+click_rect(lay_nb, "barToggle")
+time.sleep(0.5)
+lay_bar = layout(n)
+print("bar on:", lay_bar["clientH"], lay_bar["bar0"], lay_bar["bar1"], lay_bar["bar2"])
+assert lay_bar["floatbar"] == "1", "toggle turns the bar on"
+assert int(lay_bar["clientH"]) == h_off + 34, "only the toggle adds the 34 px bar row"
+assert int(lay_bar["barTop"]) > int(lay_bar["gridTop"]), "bar sits under the grid"
+assert lay_bar["gridTop"] == lay_nb["gridTop"], "the grid must not move"
+segs = [rect(lay_bar, f"bar{i}") for i in range(3)]
+assert sum(s[2] for s in segs) == int(lay_bar["clientW"]) - 24, "S|E|M span the row"
+assert segs[0][0] < segs[1][0] < segs[2][0], "display order is S | E | M"
+# f32 1.5 = 0x3FC00000: S=0, E=0x7F, M=0x400000
+assert bar_copy(lay_bar, 0) == "0x0", "S block copies the sign"
+assert bar_copy(lay_bar, 1) == "0x7F", "E block copies the biased exponent"
+assert bar_copy(lay_bar, 2) == "0x400000", "M block copies the mantissa"
+# hover E: the caption names the field, the grid highlights its bits
+l, t, w, h = rect(lay_bar, "bar1")
+post_move(hwnd, l + w // 2, t + h // 2)
+time.sleep(0.3)
+assert shoot(PNG_FLOATBAR)
+post_move(hwnd, 10, 10)
+time.sleep(0.2)
+
+# f16 changes the container: the bar follows the table, height stays the same
+n = n_layouts()
+user32.SendMessageW(edit, WM_SETTEXT, 0, "f16 1.5")
+time.sleep(0.6)
+lay_h = layout(n)
+assert int(lay_h["clientH"]) - int(lay_h["barTop"]) == int(lay_bar["clientH"]) - int(lay_bar["barTop"])
+assert bar_copy(lay_h, 1) == "0xF" and bar_copy(lay_h, 2) == "0x200", "f16 1.5 = 0x3E00"
+
+# integer with a matching width: a dimmed ghost reading of the same bits
+n = n_layouts()
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0x3FC00000")
+time.sleep(0.6)
+lay_g = layout(n)
+assert lay_g["float"] == "0" and rect(lay_g, "bar1")[2] > 0, "ghost bar for a 32-bit integer"
+assert bar_copy(lay_g, 1) == "0x7F", "ghost E block reads the same pattern"
+assert shoot(PNG_GHOST)
+
+# 8 bits has no container: grey band, nothing clickable, same row height
+n = n_layouts()
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u8 0x5")
+time.sleep(0.6)
+lay_u8 = layout(n)
+assert all(rect(lay_u8, f"bar{i}")[2] == 0 for i in range(3)), "no segments without a container"
+assert int(lay_u8["barTop"]) > 0, "the bar row stays while the toggle is on"
+
+# toggle off restores the original height
+user32.SendMessageW(edit, WM_SETTEXT, 0, "u32 0xA5 & 0x0F")
+time.sleep(0.5)
+n = n_layouts()
+click_rect(lay_bar, "barToggle")
+time.sleep(0.5)
+lay_off = layout(n)
+assert lay_off["floatbar"] == "0" and int(lay_off["clientH"]) == h_off, "toggle off shrinks back"
 time.sleep(2.3)  # let the clear-history message fade before the final shot
 
 # ---- 8: final screenshot and clean shutdown ----
