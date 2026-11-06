@@ -60,6 +60,15 @@ QQmlEngine* ensureEngine()
 bool guiOpen(const EditorSpec& spec, std::string& error)
 {
     error.clear();
+    // One workbench at a time, and the previous window must die synchronously
+    // before the next one takes the WindowFrame over: the old window's
+    // WM_NCDESTROY clears the frame's HWND while the frame still points at
+    // it, and re-fitting a second window over that live HWND crashed the
+    // process (0xC0000005 on every same-process reopen).
+    if (g_window) {
+        g_window->close();
+        delete g_window.data(); // destroyed fires: g_visible drops to false
+    }
     QQmlEngine* engine = ensureEngine();
     auto* model = new WorkbenchModel(spec, engine);
     winshun::debug("ra9fael.binarylab: import paths: " + engine->importPathList().join(';').toStdString());

@@ -119,6 +119,30 @@ QString BitsModel::unsignedText() const
     return utf8(r.unsignedDec);
 }
 
+QVariantList BitsModel::readouts() const
+{
+    QVariantList chips;
+    chips.push_back(QVariantMap { { "label", "HEX" }, { "value", hexText() } });
+    chips.push_back(QVariantMap { { "label", "OCT" }, { "value", octText() } });
+    chips.push_back(QVariantMap { { "label", "BIN" }, { "value", binText() } });
+    chips.push_back(QVariantMap { { "label", m_isFloat ? "FLOAT" : "DEC" }, { "value", decText() } });
+    if (m_isFloat)
+        chips.push_back(QVariantMap { { "label", "DEC" }, { "value", unsignedText() } });
+    return chips;
+}
+
+QVariantList BitsModel::parity() const
+{
+    QVariantList chips;
+    chips.push_back(QVariantMap { { "label", "PC" },
+        { "value", m_ones % 2 == 0 ? (m_zh ? "偶" : "even") : (m_zh ? "奇" : "odd") } });
+    chips.push_back(QVariantMap { { "label", "0" },
+        { "value", m_value == 0 ? (m_zh ? "全零" : "zero") : (m_zh ? "非零" : "nonzero") } });
+    chips.push_back(QVariantMap { { "label", "TZ" }, { "value", trailingZeros() } });
+    chips.push_back(QVariantMap { { "label", "LZ" }, { "value", leadingZeros() } });
+    return chips;
+}
+
 int BitsModel::trailingZeros() const
 {
     if (m_value == 0)

@@ -164,22 +164,16 @@ Item {
 
         // ---- HEX / OCT / BIN / DEC (FLOAT), a chip per base: click to copy
         // (a Flow, so a narrow window wraps the BIN chip to the next line —
-        // the Win32 workbench's chip wrapping, 93a2b26)
+        // the Win32 workbench's chip wrapping, 93a2b26). The copied note sits
+        // in the same Flow, as plain flow content: a child with anchors
+        // inside a positioner is illegal and broke the Flow's layout the
+        // moment the note appeared (the whole row collapsed to zero height
+        // and never came back).
         Flow {
             width: parent.width
             spacing: 8
             Repeater {
-                model: {
-                    const chips = [
-                        { label: "HEX", value: page.lab.hexText },
-                        { label: "OCT", value: page.lab.octText },
-                        { label: "BIN", value: page.lab.binText },
-                        { label: page.lab.isFloat ? "FLOAT" : "DEC", value: page.lab.decText },
-                    ]
-                    if (page.lab.isFloat)
-                        chips.push({ label: "DEC", value: page.lab.unsignedText })
-                    return chips
-                }
+                model: page.lab.readouts // the model's list property, built in C++
                 delegate: FlatButton {
                     required property var modelData
                     text: modelData.label + "  " + modelData.value
@@ -187,11 +181,9 @@ Item {
                 }
             }
             Text {
-                anchors.verticalCenter: parent.verticalCenter
                 text: page.lab.message
                 color: Theme.success
                 font.pixelSize: Theme.fontCaption
-                Behavior on opacity { NumberAnimation { duration: 150 } }
             }
         }
 
@@ -199,14 +191,7 @@ Item {
         Row {
             spacing: 8
             Repeater {
-                model: [
-                    { label: "PC", value: page.lab.onesCount % 2 === 0
-                        ? (page.lab.zh ? "偶" : "even") : (page.lab.zh ? "奇" : "odd") },
-                    { label: "0", value: page.lab.allZero
-                        ? (page.lab.zh ? "全零" : "zero") : (page.lab.zh ? "非零" : "nonzero") },
-                    { label: "TZ", value: String(page.lab.trailingZeros) },
-                    { label: "LZ", value: String(page.lab.leadingZeros) },
-                ]
+                model: page.lab.parity // built in C++, like the chips above
                 delegate: Rectangle {
                     id: chip
 

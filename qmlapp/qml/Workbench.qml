@@ -30,6 +30,9 @@ Window {
     // The Win32 workbench re-fits the window per mode; keep the loaded page's
     // height (the user can still resize freely afterwards). The page Item's
     // height is the Loader's (not constrained), so measure its implicitHeight.
+    readonly property real contentHeight: loader.item && loader.item.implicitHeight > 0
+        ? loader.item.implicitHeight : 0
+    onContentHeightChanged: Qt.callLater(window.fitHeight)
     function fitHeight() {
         const content = loader.item
         if (!content || content.implicitHeight <= 0)

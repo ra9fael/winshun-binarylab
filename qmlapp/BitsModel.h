@@ -40,6 +40,11 @@ class BitsModel : public QObject {
     Q_PROPERTY(QString binGroupedText READ binGroupedText NOTIFY stateChanged)
     Q_PROPERTY(QString decText READ decText NOTIFY stateChanged)
     Q_PROPERTY(QString unsignedText READ unsignedText NOTIFY stateChanged)
+    // The chips and the parity row bind to these lists, built here in C++
+    // like bitValues(): the page's Repeaters take a stable list from the
+    // model instead of rebuilding a JS array on every state change.
+    Q_PROPERTY(QVariantList readouts READ readouts NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList parity READ parity NOTIFY stateChanged)
     Q_PROPERTY(int onesCount READ onesCount NOTIFY stateChanged)
     Q_PROPERTY(bool allZero READ allZero NOTIFY stateChanged)
     Q_PROPERTY(int trailingZeros READ trailingZeros NOTIFY stateChanged)
@@ -68,6 +73,8 @@ public:
     QString binGroupedText() const;
     QString decText() const;
     QString unsignedText() const;
+    QVariantList readouts() const;   // HEX/OCT/BIN/DEC(FLOAT) chip entries
+    QVariantList parity() const;     // PC/0/TZ/LZ chip entries
     int onesCount() const { return m_ones; }
     bool allZero() const { return m_value == 0; }
     int trailingZeros() const;
