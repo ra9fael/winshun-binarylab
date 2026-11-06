@@ -568,6 +568,23 @@ int main()
         CHECK(bitsOf("f16 Inf", ok) == 0x7C00 && ok, "f16 infinity");
         CHECK(bitsOf("f16 0x3E00", ok) == 0x3E00 && ok, "f16 accepts a raw pattern");
 
+        // A plain decimal under a float prefix is a value, not raw bits: the
+        // reading every user expects from "f32 88". Raw bits keep a base prefix
+        // or '@'.
+        CHECK(bitsOf("f32 88", ok) == 0x42B00000 && ok, "f32 88 encodes 88.0");
+        CHECK(bitsOf("f16 65504", ok) == 0x7BFF && ok, "f16 65504 is the largest finite, not 0xFFE0");
+        CHECK(bitsOf("f64 1", ok, 64) == 0x3FF0000000000000ULL && ok, "f64 1 encodes 1.0");
+        CHECK(bitsOf("f32 -2", ok) == 0xC0000000 && ok, "f32 -2 keeps the sign");
+        CHECK(bitsOf("f16 0", ok) == 0x0000 && ok, "f16 0 is +0");
+        CHECK(bitsOf("f32 4K", ok) == 0x457A0000 && ok, "a unit applies before encoding: 4K = 4000.0");
+        CHECK(bitsOf("f32 @88", ok) == 0x58 && ok, "'@' still spells a raw decimal pattern");
+        CHECK(bitsOf("f32 0b1011000", ok) == 0x58 && ok, "a base prefix still spells raw bits");
+        CHECK(binlab::evalBits("f16 65536", 32, false).value.floatNote.find("+Inf") != std::string::npos,
+              "an integer beyond binary16 reports +Inf instead of E_RANGE");
+        CHECK(bitsOf("u32 88", ok) == 88 && ok, "integer types are untouched");
+        CHECK(bitsOf("f32 0x3FC00000 | 1", ok) == 0x3FC00001 && ok,
+              "bit operations under a float prefix still take decimal masks as raw bits");
+
         const auto infNote = binlab::evalBits("f16 1e30", 32, false);
         CHECK(infNote.success && infNote.value.floatNote.find("beyond binary16") != std::string::npos
               && infNote.value.floatNote.find("+Inf") != std::string::npos,

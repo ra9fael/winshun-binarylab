@@ -619,6 +619,10 @@ struct LiteralInfo {
     bool isFloat = false;
     int floatWidth = 64;
     int requestFloatWidth = 64;
+    // Input: a float prefix is in force, so a plain decimal integer is a value
+    // to encode (f32 88 -> 88.0), not a raw pattern. Raw bits are spelled in a
+    // non-decimal base or with '@'.
+    bool decimalIsValue = false;
     std::string floatText;
     std::string floatNote;  // set when the value left its container's range
     std::string unitNote;
@@ -665,7 +669,8 @@ inline std::string bitGrid(int width, std::uint64_t lhs, std::uint64_t rhs,
 //   @0xFF  raw bit pattern (range checks against the width still apply)
 //   -2     allowed only for signed types
 //   4M     decimal literal with a pure-ASCII unit multiplier (SI/IEC)
-//   1.5    IEEE-754 bit pattern (f32 / f64), reported through LiteralInfo
+//   1.5    IEEE-754 bit pattern (f16 / f32 / f64), reported through LiteralInfo;
+//          under a float prefix a plain decimal (f32 88) is encoded the same way
 //
 // Unit suffixes are stripped only from decimal literals whose head is plain
 // digits, so hex digits such as the B in 0xAB are never mistaken for a unit.
@@ -735,7 +740,8 @@ inline Outcome<std::uint64_t> parseLiteral(const std::string& tokenIn, int width
     if (base == 10 && !raw) {
         floatIntent = clean.find('.') != std::string::npos
                    || clean.find_first_of("eE") != std::string::npos
-                   || (unit != nullptr && unit->fractional);
+                   || (unit != nullptr && unit->fractional)
+                   || (info != nullptr && info->decimalIsValue);
         const std::string lc = lower(clean);
         if (lc == "inf" || lc == "infinity" || lc == "nan")
             floatIntent = true;
@@ -1782,6 +1788,7 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
     if (rest.size() == 2 && rest[0] == "-") {
         LiteralInfo probe;
         probe.requestFloatWidth = floatWidth;
+        probe.decimalIsValue = floatSpec != nullptr;
         auto probeResult = parseLiteral("-" + rest[1], 64, false, &probe);
         negFloat = probeResult.success && probe.isFloat;
     }
@@ -1789,6 +1796,7 @@ inline Outcome<BitsEval> evalBits(const std::string& input, int defaultWidth, bo
         const std::string lit = negFloat ? "-" + rest[1] : rest[0];
         LiteralInfo li;
         li.requestFloatWidth = floatWidth;
+        li.decimalIsValue = floatSpec != nullptr;
         auto a = parseLiteral(lit, e.width, e.signedType, &li);
         if (!a.success)
             return failWith<BitsEval>(a.failure);
