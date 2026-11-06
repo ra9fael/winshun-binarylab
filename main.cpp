@@ -9,7 +9,16 @@
 // the host's locale (Chinese by default, English when locale starts with "en").
 #include "winshun.h"
 
+// The QML workbench (the qml branch's prototype) keeps this file's query and
+// action mapping and swaps only the window: BinaryLabApp.dll defines
+// BINLAB_QML_WORKBENCH and gets qmlapp/editor.h (the Qt-side API), the exe
+// build keeps the Win32 workbench.
+#ifdef BINLAB_QML_WORKBENCH
+#include "qmlapp/editor.h"
+#else
 #include "editor.h"
+#endif
+
 #include "formats_toml.h"
 #include "logic.h"
 
@@ -859,7 +868,22 @@ struct BinaryLab : winshun::Plugin {
 
 } // namespace
 
+#ifdef BINLAB_QML_WORKBENCH
+// The QML workbench's DLL runs the protocol on a worker thread (qmlapp/
+// qmlmain.cpp); this is the loop it runs, with the mapping above unchanged.
+namespace binlab {
+int runServeLoop()
+{
+    BinaryLab plugin;
+    const int rc = plugin.serve();
+    winshun::debug("ra9fael.binarylab: serve() returned " + std::to_string(rc));
+    return rc;
+}
+} // namespace binlab
+#else
+
 int main()
 {
     return BinaryLab().serve();
 }
+#endif
