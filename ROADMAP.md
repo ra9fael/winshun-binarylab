@@ -162,6 +162,19 @@
   prefix-wins); drive sections 7h/7i (precedence chips, session mode switch)
   are written but their GUI run is still pending a desktop that is not in
   active use.
+- **v0.3a7 — implemented (2026-11-06).** Float package from "why only
+  f32/f64??" and the approved wireframe B. One IEEE-754 container table
+  (`FloatSpec`) drives every float consumer; binary16 is a row like the
+  others (frexp/rint encoder, round-half-to-even); unimplemented spellings
+  give `E_FLOAT_TYPE`. The workbench gains an in-window composition bar,
+  opened by a pill at the free right end of the top bar (rejected: a second
+  window glued outside the frame — editor.h:8 history, self-sizing frame,
+  DPI/move sync, cross-HWND hover). Hard rule kept: the bar row height
+  follows the toggle only, never the result type. Ghost reading for integer
+  results at 16/32/64 bits, grey band at 8 bits, bar ↔ grid hover linkage,
+  click-to-copy per field, `floatBar` setting for the initial state.
+  Verification: 259/259 logic assertions; drive section 7j written, GUI run
+  pending with 7h/7i.
 - **v0.3b (CRC kernel + bytes workbench + `crc`/`parity` commands) remains
   deferred.** This round and v0.3a3/a4 took priority because they were
   reported by the user while using the workbench.

@@ -63,7 +63,7 @@ release process, see [CONTRIBUTING.md](CONTRIBUTING.md).
 ### `bits` syntax
 
 ```
-bits [u8|u16|u32|u64|i8|i16|i32|i64|f32|f64] EXPRESSION
+bits [u8|u16|u32|u64|i8|i16|i32|i64|f16|f32|f64] EXPRESSION
      operators: ~ + - (unary) · ** · * / % · + - · << >> rol ror · & ^ | · parentheses
      raw bits : @0xFF          (reinterpret a bit pattern, e.g. i8 @0xFF = -1)
      fields   : get|set|clear|toggle VALUE HIGH:LOW [VALUE]
@@ -93,7 +93,7 @@ are never silently truncated.
 ```
 bytes [hex|bin|oct] [TYPE] DATA...
 TYPE : u8 i8 u16[le|be] i16[le|be] u32[le|be] i32[le|be]
-       u64[le|be] i64[le|be] f32[le|be] f64[le|be]
+       u64[le|be] i64[le|be] f16[le|be] f32[le|be] f64[le|be]
 ```
 
 `u16` / `u32` / `u64` / `f32` / `f64` without a suffix use the `defaultEndian`
@@ -192,10 +192,24 @@ expression.
 #### Float bit patterns
 
 `1.5`, `.5`, `1e6`, `1_000.25`, `Inf`, `-Inf` and `NaN` encode into IEEE-754
-bit patterns: `f64` (binary64) by default, `f32` for binary32. HEX / OCT / BIN
+bit patterns: `f64` (binary64) by default, `f32` for binary32 and `f16` for
+binary16 (round-half-to-even; the detail notes when a value leaves the
+container and becomes ±Inf or 0). All three containers come from one table;
+unimplemented spellings such as `f128` or `bf16` give `E_FLOAT_TYPE` instead of
+a misleading digit error. HEX / OCT / BIN
 show the encoded bits, the FLOAT chip (replacing DEC in float mode) shows the
 shortest round-tripping decimal text, and a purple / blue / green band marks
 S / E / M at the top of each bit cell.
+
+**Float bar**: the "float bar" pill at the right end of the top bar opens a
+row under the grid with proportional S | E | M blocks. Each block shows its
+bit count and raw field value and copies that field on click (e.g. `0x7F`).
+Pointing at a block puts its bit range, unbiased exponent and so on in the
+caption line and highlights its bits in the grid; pointing at a bit lights its
+block. An integer result at width 16 / 32 / 64 shows a dimmed "ghost-read as
+f16/f32/f64" bar; 8 bits has no container and shows a grey band with a hint.
+The window grows by 34 px only when the pill is switched, never because of the
+result type. The `floatBar` setting picks the initial state.
 
 There is no float arithmetic: a float **literal** must stand alone
 (`1.5 & 0xFF` gives `E_FLOAT_OP`, `u32 1.5` gives `E_FLOAT_TYPE`). To apply bit
@@ -230,6 +244,7 @@ failure shows one `valid: false` row with an error code and a corrected example.
 | `defaultPack` | choice | `0` | `pack` for `struct` when `pack=N` is omitted |
 | `bitsEnter` | choice | `copy` | Which of copy / editor takes Enter on `bits` rows. `copy` (default) = Enter copies, Ctrl+Enter opens the editor; `editor` swaps them. |
 | `evalMode` | choice | `fixed` | Expression evaluation mode. `fixed` (default) keeps every step inside the width and reports wrapping; `c` applies C integer promotions and derives the result type. An explicit type prefix always evaluates fixed. |
+| `floatBar` | choice | `off` | Whether the workbench opens with the float bar shown; the in-window pill toggles it for that window only. |
 
 Settings are read from `initialize` and refreshed on `settingsChanged`; no
 secrets are involved.

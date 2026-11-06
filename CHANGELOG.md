@@ -25,8 +25,19 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   Ctrl+Y (yank), Ctrl+L (clear), Esc (clear, then close).
 - Syntax errors name the offending token (`... near '('`).
 - The workbench focuses the expression box when the window opens.
+- IEEE-754 binary16: `f16 1.5` = `0x3E00`, round-half-to-even, and `f16` words
+  in `bytes`. Float containers come from one table (`FloatSpec`), so the
+  encoder, FLOAT text, S/E/M breakdown and special-value labels share it.
+  Values that leave their container say so (`+Inf` / `0` notes).
+- Float composition bar in the workbench: a top-bar pill opens a fixed 34 px
+  row of proportional S | E | M blocks under the grid, each copying its field;
+  bar and grid share one hover highlight; integer results at 16 / 32 / 64 bits
+  get a dimmed ghost reading, 8 bits a grey band. New `floatBar` setting
+  (`off` / `on`) picks the initial state.
 
 ### Changed
+- Unimplemented float spellings (`f128`, `bf16`, `f8`, ...) now fail with
+  `E_FLOAT_TYPE` naming `f16 / f32 / f64` instead of "invalid digit".
 - Bare negative literals now wrap to the type instead of erroring
   (`u8 -1` = `0xFF`, `i8 -129` = `0x7F`), consistent with the fixed-width
   rule that every step stays inside the width and is reported.

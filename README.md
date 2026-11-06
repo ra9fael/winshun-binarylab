@@ -54,7 +54,7 @@ python tools/package.py                    # dist/ra9fael.binarylab-<version>.ws
 ### `bits` 语法
 
 ```
-bits [u8|u16|u32|u64|i8|i16|i32|i64|f32|f64] EXPRESSION
+bits [u8|u16|u32|u64|i8|i16|i32|i64|f16|f32|f64] EXPRESSION
      运算符   : ~ + -（一元） · ** · * / % · + - · << >> rol ror · & ^ | · 括号
      raw bits : @0xFF          (按位模式重新解释，例如 i8 @0xFF = -1)
      fields   : get|set|clear|toggle VALUE HIGH:LOW [VALUE]
@@ -78,7 +78,7 @@ bits [u8|u16|u32|u64|i8|i16|i32|i64|f32|f64] EXPRESSION
 ```
 bytes [hex|bin|oct] [TYPE] DATA...
 TYPE : u8 i8 u16[le|be] i16[le|be] u32[le|be] i32[le|be]
-       u64[le|be] i64[le|be] f32[le|be] f64[le|be]
+       u64[le|be] i64[le|be] f16[le|be] f32[le|be] f64[le|be]
 ```
 
 不带后缀的 `u16` / `u32` / `u64` / `f32` / `f64` 使用 `defaultEndian` 设置；
@@ -160,7 +160,9 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 
 #### 浮点位模式
 
-`1.5`、`.5`、`1e6`、`1_000.25`、`Inf`、`-Inf`、`NaN` 会编码成 IEEE-754 位模式，默认 `f64`（binary64），写 `f32` 前缀则用 binary32。HEX / OCT / BIN 显示编码后的位模式，FLOAT chip（浮点时替代 DEC）显示可往返还原的最短十进制文本，位格顶部用紫 / 蓝 / 绿标出 S / E / M 三段。
+`1.5`、`.5`、`1e6`、`1_000.25`、`Inf`、`-Inf`、`NaN` 会编码成 IEEE-754 位模式，默认 `f64`（binary64），`f32` 前缀用 binary32，`f16` 前缀用 binary16（舍入为就近偶数，超出范围时明细会注明变成 ±Inf 或 0）。三种容器来自同一张表，`f128`、`bf16` 等未实现的写法报 `E_FLOAT_TYPE`，不再误报成数字错误。HEX / OCT / BIN 显示编码后的位模式，FLOAT chip（浮点时替代 DEC）显示可往返还原的最短十进制文本，位格顶部用紫 / 蓝 / 绿标出 S / E / M 三段。
+
+**浮点条带**：顶栏右端的「浮点条带」开关在位格下方展开一行 S | E | M 比例条，每块显示位数和字段原始值，点击复制该字段（如 `0x7F`）；鼠标指向一块时，说明行给出位范围、去偏移指数等，网格里对应的位同时高亮，反过来指向位格也会点亮所属的块。结果是整数但位宽为 16 / 32 / 64 时，条带以调暗的「假设按 f16/f32/f64 解释」显示；8 位没有对应容器，只显示灰条和提示。窗口只在开 / 关的一刻变高 34px，不随结果类型变化。默认值由 `floatBar` 设置决定。
 
 不做浮点算术：浮点**字面量**只能单独出现，`1.5 & 0xFF` 报 `E_FLOAT_OP`，`u32 1.5` 报 `E_FLOAT_TYPE`。要对编码后的位模式做位运算，请写原始位模式，例如 `f32 @0x3FC00000 & 0x007FFFFF`。小数单位（`1m` / `1u`）同样走这条路径。
 
@@ -183,6 +185,7 @@ TYPE   : u8 i8 u16 i32 u64 f32 f64 | 已定义的具名类型
 | `defaultPack` | choice | `0` | 省略 `pack=N` 时 `struct` 的 pack |
 | `bitsEnter` | choice | `copy` | `bits` 行上复制 / 编辑器谁占用 Enter。`copy`（默认）= Enter 复制、Ctrl+Enter 打开编辑器；`editor` 反之。 |
 | `evalMode` | choice | `fixed` | 表达式求值模式。`fixed`（默认）每步结果固定在位宽内并报告回绕；`c` 按 C 语言整数提升、结果类型自动推导。显式类型前缀始终按固定宽度求值。 |
+| `floatBar` | choice | `off` | 工作台打开时是否展开浮点条带；窗口内的开关可随时切换，只影响本次窗口。 |
 
 设置在 `initialize` 时读取，并在 `settingsChanged` 时刷新；不涉及任何密钥。
 

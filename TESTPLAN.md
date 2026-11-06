@@ -206,6 +206,26 @@ caveat as L4).
   logic level; host `settingsChanged` round trip is unchanged plumbing
   already covered by L2.
 
+## L8 — f16 and the float composition bar (2026-11-06)
+
+- `tests/test_logic.cpp`: **259/259** assertions. New blocks: container table
+  self-consistency, S/E/M segment boundaries for f16/f32/f64,
+  `floatSpecialLabel`, 15 binary16 vectors (`1.5` → 0x3E00, `0.1` → 0x2E66,
+  `65504.0` → 0x7BFF, `65520.0` → +Inf, smallest normal/subnormal, `-0.0`),
+  overflow/underflow notes, round-half-to-even ties and an exhaustive
+  round-trip over every finite binary16 pattern; `f128 1.5` → `E_FLOAT_TYPE`.
+- `tools/verify/workbench_drive.py` section 7j: bar hidden by default; the
+  pill adds exactly 34 px and the grid does not move; S | E | M rects span
+  `clientW - 24` in MSB order; `f32 1.5` blocks copy `0x0` / `0x7F` /
+  `0x400000`; `f16 1.5` copies `0xF` / `0x200` at the same row height;
+  `u32 0x3FC00000` gives a ghost bar that still copies `0x7F`; `u8` leaves no
+  clickable segment while the row stays; toggling off restores the height.
+  Screenshots `workbench_floatbar.png` (E hovered) and
+  `workbench_floatbar_ghost.png`.
+- **Status of 7j: written, not yet measured** (same desktop constraint as
+  7h/7i). The build is green and the logic is covered; the GUI run and a
+  look at the captions (ellipsis on the 456 px row) are still owed.
+
 ## Honest notes / corrections
 
 - The earlier design example said `bytes oct 377 040 000 -> FF 40 00`. That
