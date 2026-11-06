@@ -67,6 +67,7 @@ struct EditorSpec {
     int hostPack = 0;
     std::string hostBitsEnter = "copy";
     std::string hostEvalMode = "fixed";
+    std::string hostFloatBar = "off"; // floatBar setting: seeds the in-window bar
     std::string dataDir;           // host dataDir; history.jsonl lives here
 };
 
@@ -111,6 +112,7 @@ struct EditorState {
     int hostPack = 0;
     std::string hostBitsEnter = "copy";
     std::string hostEvalMode = "fixed";
+    std::string hostFloatBar = "off";
     bool cMode = false;
     int focusBit = -1;
     bool dragging = false;
@@ -143,6 +145,10 @@ struct EditorState {
     RECT rcSignBtn[2] = {};    // unsigned | signed
     RECT rcParity[4] = {};     // status row 2: labelled parity chips
     int hoverParity = -1;      // chip under the cursor, for the definition tip
+    RECT rcBarToggle = {};     // top bar right end: show / hide the float bar
+    RECT rcBarSeg[3] = {};     // composition bar, display order S | E | M
+    int barTop = 0;            // top of the bar row (bits mode, 0 when hidden)
+    int hoverSeg = -1;         // segment under the cursor, in bar *or* grid
     RECT rcSetWidth[4] = {};   // settings tab: 8 | 16 | 32 | 64
     RECT rcSetSign[2] = {};    // settings tab: u | i
     RECT rcSetMode[2] = {};    // settings tab: fixed | C
@@ -156,6 +162,9 @@ struct EditorState {
     bool isFloat = false;
     std::string floatText;
     std::string unitNote;
+    // The composition bar is a view, not a result property: its row height
+    // follows this flag alone, never the type of what is on display.
+    bool floatBar = false;
 
     // Expression history. A dropdown, not a sixth tab: history is an input
     // assistant and must stay usable while the bit grid is visible.
@@ -394,6 +403,8 @@ constexpr int kToolH = 26;      // width / signedness toolbar
 constexpr int kCellH = 32;
 constexpr int kLabelH = 14;
 constexpr int kRowGap = 6;
+constexpr int kBarH = 34;          // float composition row: caption line + bar
+constexpr int kBarCaptionH = 14;   // caption line inside the bar row
 constexpr int kStatusH = 46;       // two rows: context | parity / messages
 constexpr int kStatusRowH = 23;
 constexpr int kPanelContentH = 200; // settings/help two-column content area
@@ -504,15 +515,124 @@ std::string parityDefinition(int i, bool zh)
     return zh ? kZh[i] : kEn[i];
 }
 
-// Sign / exponent / mantissa colour for the float bit-grid band.
-COLORREF floatSegColor(int bit, int width)
+// Sign / exponent / mantissa colour, shared by the grid band and the bar. The
+// field a bit belongs to comes from the container table, so a new row there
+// needs no change here.
+COLORREF floatSegColorByField(int segment)
 {
-    if (bit == width - 1)
-        return RGB(190, 130, 240); // S
-    const int exponentLow = width == 64 ? 52 : 23;
-    if (bit >= exponentLow)
-        return RGB(88, 166, 255);  // E
-    return RGB(127, 209, 168);     // M
+    switch (segment) {
+    case 2: return RGB(190, 130, 240); // S
+    case 1: return RGB(88, 166, 255);  // E
+    default: return RGB(127, 209, 168); // M
+    }
+}
+
+COLORREF floatSegColor(int bit, const binlab::FloatSpec& f)
+{
+    return floatSegColorByField(binlab::floatSegment(bit, f));
+}
+
+// num/den of `a` blended into `b`: used for the dimmed ghost band and for the
+// hover glow, both of which must stay readable against the cell colours.
+COLORREF mixColor(COLORREF a, COLORREF b, int num, int den)
+{
+    const int nr = (GetRValue(a) * (den - num) + GetRValue(b) * num) / den;
+    const int ng = (GetGValue(a) * (den - num) + GetGValue(b) * num) / den;
+    const int nb = (GetBValue(a) * (den - num) + GetBValue(b) * num) / den;
+    return RGB(nr, ng, nb);
+}
+
+// How the pattern on display can be read as a float. `spec` is null when the
+// width has no IEEE-754 container at all. `ghost` marks the hypothetical case:
+// an integer result whose bits *would* form a valid float of that width, which
+// the bar shows dimmed because it is not what the expression computed.
+struct FloatView {
+    const binlab::FloatSpec* spec = nullptr;
+    bool ghost = false;
+};
+
+FloatView floatView()
+{
+    const EditorState& s = state();
+    FloatView v;
+    v.spec = binlab::floatByBits(s.width);
+    v.ghost = v.spec != nullptr && !s.isFloat;
+    if (v.ghost && !s.floatBar)
+        v.spec = nullptr; // a hypothetical reading is only shown when asked for
+    return v;
+}
+
+// Display order in the bar is MSB first (S | E | M); floatSegment() numbers the
+// fields the other way round (0 = mantissa), and this is the only mapping.
+int barIndexForSegment(int segment)
+{
+    return 2 - segment;
+}
+
+std::string fieldHex(std::uint64_t v)
+{
+    char b[24];
+    std::snprintf(b, sizeof b, "0x%llX", static_cast<unsigned long long>(v));
+    return b;
+}
+
+// One fixed caption line: what the bits are read as, or, while the cursor is on
+// a field, that field's own numbers. Keeping it one line is what lets the bar
+// row stay exactly kBarH tall for every result type.
+std::string barCaption(const FloatView& v, int hoverSeg, bool zh)
+{
+    EditorState& s = state();
+    if (!v.spec) {
+        return zh ? std::to_string(s.width) + " 位无 IEEE-754 容器 · 改用 16/32/64 位或 "
+                       + binlab::floatNameList()
+                  : std::to_string(s.width) + "-bit: no IEEE-754 container · use 16/32/64 or "
+                    + binlab::floatNameList();
+    }
+    const binlab::FloatSpec& f = *v.spec;
+    const std::string layout = std::to_string(1) + "+" + std::to_string(f.expBits) + "+"
+                             + std::to_string(f.mantBits);
+    if (hoverSeg >= 0) {
+        const binlab::FloatFields g = binlab::floatFields(s.value, f);
+        const int lo = hoverSeg == 2 ? f.bits - 1 : f.mantBits;
+        const int hi = hoverSeg == 0 ? f.mantBits - 1 : f.bits - 2;
+        const char* name[3] = { "M", "E", "S" };
+        std::string out = std::string(name[hoverSeg]) + " ";
+        if (hoverSeg == 2) {
+            out += zh ? "符号 1 位 · 位 " + std::to_string(lo) + " = " + std::to_string(g.sign)
+                           + (g.sign ? (zh ? "（负）" : " (negative)") : (zh ? "（正）" : " (positive)"))
+                      : "sign 1 bit · bit " + std::to_string(lo) + " = " + std::to_string(g.sign)
+                           + (g.sign ? " (negative)" : " (positive)");
+        } else if (hoverSeg == 1) {
+            const long long unbiased = static_cast<long long>(g.exp) - f.bias;
+            out += zh ? "指数 " + std::to_string(f.expBits) + " 位 · 位 " + std::to_string(lo) + "-"
+                           + std::to_string(hi) + " = " + fieldHex(g.exp)
+                           + "（去偏移 " + std::to_string(unbiased) + "，偏移 " + std::to_string(f.bias) + "）"
+                      : "exponent " + std::to_string(f.expBits) + " bits · bit " + std::to_string(lo) + "-"
+                           + std::to_string(hi) + " = " + fieldHex(g.exp) + " (unbiased "
+                           + std::to_string(unbiased) + ", bias " + std::to_string(f.bias) + ")";
+        } else {
+            out += zh ? "尾数 " + std::to_string(f.mantBits) + " 位 · 位 0-" + std::to_string(hi)
+                           + " = " + fieldHex(g.mant)
+                           + (g.exp == 0 ? " · 隐含前导 0" : " · 隐含前导 1")
+                      : "mantissa " + std::to_string(f.mantBits) + " bits · bit 0-" + std::to_string(hi)
+                           + " = " + fieldHex(g.mant)
+                           + (g.exp == 0 ? " · implicit leading 0" : " · implicit leading 1");
+        }
+        return out;
+    }
+    const std::string special = binlab::floatSpecialLabel(s.value, f);
+    std::string out = v.ghost
+        ? binlab::typeNameFor(s.width, s.isSigned) + " · "
+              + (zh ? "假设按 " : "ghost-read as ") + f.name + (zh ? " 解释 · " : " · ")
+        : std::string(f.name) + " · IEEE-754 " + f.ieee + " · ";
+    out += layout;
+    if (!special.empty())
+        out += " · " + special;
+    // A ghost reading is only a hypothesis about the same bits, and the caption
+    // has to say so instead of showing a number that is not the result.
+    out += v.ghost ? (zh ? " · 非当前结果" : " · not the current result")
+                   : " · " + s.floatText;
+    return out;
 }
 
 int getBit(std::uint64_t value, int bit)
@@ -634,7 +754,15 @@ void computeLayout(HDC dc)
 
     // Five tabs fit both languages in the narrowest window (measured:
     // 298 px zh / 287 px en at 480 px client width), so the right end of the
-    // top bar is deliberately left empty.
+    // top bar is deliberately left empty. The float-bar pill lives there, and
+    // is sized from measured label text for the same reason.
+    {
+        HFONT pillFont = uiFont(12, false, s.zh);
+        const int lw = textWidth(dc, pillFont, wideFromUtf8(s.zh ? "浮点条带" : "float bar"));
+        DeleteObject(pillFont);
+        const int pw = lw + 22;
+        s.rcBarToggle = { s.clientW - 12 - pw, 6, s.clientW - 12, kTopH - 6 };
+    }
     s.resultRows = 0;
     if (bits) {
         const int chipsTop = kTopH + kExprH + 4;
@@ -683,7 +811,35 @@ void computeLayout(HDC dc)
     // the nibble gap span exactly clientW - 2 * margin.
     s.cellW = std::max(kMinCellW, (s.clientW - 2 * kGridMargin - kNibbleGap + 4) / 8);
     if (bits) {
-        s.clientH = s.gridTop + s.gridRows * (kLabelH + kCellH + kRowGap) + 8 + kStatusH;
+        // The composition bar is the last content row: the grid never moves
+        // because of it, and its height follows the toggle alone.
+        const int gridBottom = s.gridTop + s.gridRows * (kLabelH + kCellH + kRowGap);
+        s.barTop = s.floatBar ? gridBottom + 8 : 0;
+        s.clientH = gridBottom + (s.floatBar ? kBarH : 0) + 8 + kStatusH;
+        for (RECT& r : s.rcBarSeg)
+            r = {};
+        if (s.floatBar) {
+            const int W = s.clientW - 24;
+            const int segTop = s.barTop + kBarCaptionH + 2;
+            const int segBottom = s.barTop + kBarH - 2;
+            const FloatView view = floatView();
+            if (view.spec) {
+                const binlab::FloatSpec& f = *view.spec;
+                // Proportional to the field widths, with floors so a 1-bit sign
+                // and a 5-bit exponent stay clickable and labelable at all.
+                int wS = std::max(20, W / f.bits);
+                int wE = std::max(46, W * f.expBits / f.bits);
+                if (wS + wE > W - 46)
+                    wE = std::max(46, W - 46 - wS);
+                const int wM = W - wS - wE;
+                const int x0 = 12;
+                s.rcBarSeg[barIndexForSegment(2)] = { x0, segTop, x0 + wS, segBottom };
+                s.rcBarSeg[barIndexForSegment(1)] = { x0 + wS, segTop, x0 + wS + wE, segBottom };
+                s.rcBarSeg[barIndexForSegment(0)] = { x0 + wS + wE, segTop, x0 + wS + wE + wM, segBottom };
+            }
+            // Without a container no rect is filled, so nothing in the grey band
+            // is hover-able and the caption alone carries the explanation.
+        }
         s.panelTop = s.panelBottom = 0;
         s.panelCol2 = 0;
         for (RECT& r : s.rcSetWidth)
@@ -713,6 +869,9 @@ void computeLayout(HDC dc)
                                bx + i * 56 + 52, rowTop + 6 * kPanelRowH - 2 };
         s.rcClearHistory = { s.panelCol2, rowTop + 5 * kPanelRowH + 2,
                              s.panelCol2 + 132, rowTop + 6 * kPanelRowH - 2 };
+        s.barTop = 0;
+        for (RECT& r : s.rcBarSeg)
+            r = {};
     }
     s.clientH = std::max(s.clientH, kMinClientH);
     // The single-line EDIT is made exactly one text line tall. A control taller
@@ -787,9 +946,13 @@ void logLayout()
               + " sgn1=" + rectStr(s.rcSignBtn[1]);
         for (int i = 0; i < 4; ++i)
             line += " parity" + std::to_string(i) + "=" + rectStr(s.rcParity[i]);
+        for (int i = 0; i < 3; ++i)
+            line += " bar" + std::to_string(i) + "=" + rectStr(s.rcBarSeg[i]);
+        line += " barTop=" + std::to_string(s.barTop);
     }
     line += " expr=" + rectStr(s.rcExpr)
           + " histBtn=" + rectStr(s.rcHistoryBtn)
+          + " barToggle=" + rectStr(s.rcBarToggle)
           + " hist0=" + rectStr(s.rcHistoryItem[0])
           + " clearHist=" + rectStr(s.rcClearHistory)
           + " setw0=" + rectStr(s.rcSetWidth[0])
@@ -797,6 +960,7 @@ void logLayout()
           + " setmode1=" + rectStr(s.rcSetMode[1])
           + " cmode=" + std::to_string(s.cMode ? 1 : 0)
           + " float=" + std::to_string(s.isFloat ? 1 : 0)
+          + " floatbar=" + std::to_string(s.floatBar ? 1 : 0)
           + " histCount=" + std::to_string(s.history.size())
           + " histPersist=" + std::to_string(s.historyPersistent ? 1 : 0);
     winshun::debug(line);
@@ -934,6 +1098,26 @@ void parityValues(std::string out[4])
     out[1] = s.zh ? (even ? "偶" : "奇") : (even ? "even" : "odd");
     out[2] = even ? "0" : "1"; // bit to append for an even number of ones
     out[3] = even ? "1" : "0"; // bit to append for an odd number of ones
+}
+
+// A bar block copies its own field, like every other clickable readout here.
+void copyBarSegment(HWND hwnd, int segment)
+{
+    EditorState& s = state();
+    const FloatView view = floatView();
+    if (!view.spec || !s.evalError.empty())
+        return;
+    const binlab::FloatFields g = binlab::floatFields(s.value, *view.spec);
+    const std::uint64_t v = segment == 2 ? g.sign : segment == 1 ? g.exp : g.mant;
+    static const char* const kNames[3] = { "M", "E", "S" };
+    const std::string text = fieldHex(v);
+    const bool ok = copyToClipboard(hwnd, text);
+    winshun::debug(std::string("ra9fael.binarylab: copyBar ") + kNames[segment]
+                   + " value=" + text + " ok=" + (ok ? "1" : "0"));
+    s.msg = ok ? (s.zh ? std::string("已复制 ") + kNames[segment] : std::string("Copied ") + kNames[segment])
+               : (s.zh ? "复制失败" : "copy failed");
+    s.msgTick = GetTickCount();
+    InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 void evaluate(); // defined below; commit/history helpers force a re-run
@@ -1079,10 +1263,11 @@ void setType(HWND hwnd, int width, bool isSigned)
     if (width == s.width && isSigned == s.isSigned)
         return;
     // The width of a float result is fixed by its IEEE-754 container. The
-    // toolbar cannot switch f32/f64 without re-encoding, so point at the
+    // toolbar cannot switch containers without re-encoding, so point at the
     // expression prefix instead of silently truncating the bit pattern.
     if (s.isFloat) {
-        s.msg = s.zh ? "浮点位模式请用 f32 / f64 前缀切换" : "use an f32 / f64 prefix to change float width";
+        s.msg = s.zh ? "浮点位模式请用 " + binlab::floatNameList() + " 前缀切换"
+                     : "use a " + binlab::floatNameList() + " prefix to change float width";
         s.msgTick = GetTickCount();
         InvalidateRect(hwnd, nullptr, TRUE);
         return;
@@ -1430,12 +1615,12 @@ void paintHelpContent(HDC dc)
     const char* l[4] = {
         s.zh ? "0x/0b/0o · & | ^ ~ << >> ( ) + - * / % **" : "0x/0b/0o · & | ^ ~ << >> ( ) + - * / % **",
         s.zh ? "rol/ror · @ · 7:4 · get/set · 运算模式设置页可切" : "rol/ror · @ · 7:4 · get/set · eval mode in settings",
-        s.zh ? "u8..u64/i8.. · f32 f64 · 1.5 .5 1e6 Inf NaN" : "u8..u64/i8.. · f32 f64 · 1.5 .5 1e6 Inf NaN",
+        s.zh ? "u8..u64/i8.. · f16 f32 f64 · 1.5 .5 1e6 Inf NaN" : "u8..u64/i8.. · f16 f32 f64 · 1.5 .5 1e6 Inf NaN",
         s.zh ? "单位 k K M G T · Ki Mi Gi Ti · KB/MB/GB" : "Units k K M G T · Ki Mi Gi Ti · KB/MB/GB",
     };
     const char* r[4] = {
         s.zh ? "点击位格翻转 · 拖动涂抹" : "Click toggles · drag paints",
-        s.zh ? "点击 chips / 校验 chip 复制" : "Click chips / parity to copy",
+        s.zh ? "点击 chips / 校验 / 条带字段复制" : "Click chips / parity / field to copy",
         s.zh ? "Enter 提交并记历史 · ↑↓ 翻阅 · ▾ 下拉" : "Enter submits · Up/Down browse · ▾ dropdown",
         s.zh ? "方向键 · 空格 · Ctrl+C/B/D/O · Tab · Esc" : "Arrows · Space · Ctrl+C/B/D/O · Tab · Esc",
     };
@@ -1465,10 +1650,10 @@ void paintHelpContent(HDC dc)
              : "Units k/K/M/G/T = 10^n · Ki/Mi/Gi/Ti = 2^n · KB/MB/GB = 1000",
         s.zh ? "u = micro(10^-6)，不是 unsigned；微符号请用 u / micro / 1e-6"
              : "u = micro(10^-6), not unsigned; write u / micro / 1e-6 instead",
-        s.zh ? "浮点 1.5 .5 1e6 Inf NaN -> IEEE-754 位模式；f32/f64 切换宽度"
-             : "Floats 1.5 .5 1e6 Inf NaN -> IEEE-754 bits; f32/f64 switch width",
-        s.zh ? "位格色带：紫=符号 S · 蓝=指数 E · 绿=尾数 M；位运算作用于位模式"
-             : "Grid band: purple=S · blue=E · green=M; bit ops act on the pattern",
+        s.zh ? "浮点 1.5 .5 1e6 Inf NaN -> IEEE-754 位模式；f16/f32/f64 选容器"
+             : "Floats 1.5 .5 1e6 Inf NaN -> IEEE-754 bits; f16/f32/f64 pick the container",
+        s.zh ? "位格色带：紫=S · 蓝=E · 绿=M；「浮点条带」展开比例条，点块复制字段"
+             : "Grid band: purple=S · blue=E · green=M; the float-bar pill opens it, click copies a field",
     };
     SelectObject(dc, font);
     for (int i = 0; i < 5; ++i) {
@@ -1479,6 +1664,86 @@ void paintHelpContent(HDC dc)
     SelectObject(dc, old);
     DeleteObject(titleFont);
     DeleteObject(font);
+}
+
+// ---- float composition bar ---------------------------------------------------
+// One row under the grid: a caption line plus three proportional blocks in MSB
+// order (S | E | M). The row is exactly kBarH tall in every state, including the
+// two that show no fields at all, so the toggle is the only thing that can
+// resize the window - the same anti-jitter rule the tabs follow.
+void paintFloatBar(HDC dc)
+{
+    EditorState& s = state();
+    if (!s.floatBar || s.barTop <= 0)
+        return;
+    const FloatView view = floatView();
+    const int segTop = s.barTop + kBarCaptionH + 2;
+    const int segBottom = s.barTop + kBarH - 2;
+    const RECT band { 12, segTop, s.clientW - 12, segBottom };
+
+    HFONT capFont = uiFont(11, false, s.zh);
+    SelectObject(dc, capFont);
+    const bool broken = !s.evalError.empty();
+    RECT cr { 12, s.barTop, s.clientW - 12, s.barTop + kBarCaptionH };
+    // The row is a fixed 14 px line in a 456 px wide window, so a long caption
+    // (hovered exponent, no-container hint) is clipped with an ellipsis rather
+    // than wrapping into the bar or growing the row.
+    SetTextColor(dc, broken ? kErrText : kLabelText);
+    const std::wstring caption = wideFromUtf8(broken
+                                                  ? (s.zh ? "求值失败 · 位模式是最近一次有效结果"
+                                                          : "evaluation failed · pattern is the last good result")
+                                                  : barCaption(view, s.hoverSeg, s.zh));
+    DrawTextW(dc, caption.c_str(), -1, &cr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (!view.spec || broken) {
+        HBRUSH b = CreateSolidBrush(kBitOff);
+        FillRect(dc, &band, b);
+        DeleteObject(b);
+        frameRect(dc, band, kSeparator);
+        DeleteObject(capFont);
+        return;
+    }
+
+    const binlab::FloatSpec& f = *view.spec;
+    const binlab::FloatFields g = binlab::floatFields(s.value, f);
+    HFONT segFont = monoFont(11, false);
+    SelectObject(dc, segFont);
+    for (int segment = 0; segment < 3; ++segment) {
+        const int i = barIndexForSegment(segment);
+        const RECT r = s.rcBarSeg[i];
+        if (rcWidth(r) <= 0)
+            continue;
+        const std::uint64_t fieldValue = segment == 2 ? g.sign : segment == 1 ? g.exp : g.mant;
+        const int fieldBits = segment == 2 ? 1 : segment == 1 ? f.expBits : f.mantBits;
+        const char* letter = segment == 2 ? "S" : segment == 1 ? "E" : "M";
+        // Full label, then the shortenings that still say something. The width
+        // floors in computeLayout guarantee the bare letter always fits.
+        const std::string full = std::string(letter) + std::to_string(fieldBits) + " "
+                               + fieldHex(fieldValue);
+        const std::string plain = std::string(letter) + " " + fieldHex(fieldValue);
+        std::string text = plain;
+        if (textWidth(dc, segFont, wideFromUtf8(full)) <= rcWidth(r) - 8)
+            text = full;
+        else if (textWidth(dc, segFont, wideFromUtf8(plain)) > rcWidth(r) - 8)
+            text = letter;
+        // Ghost readings start dimmed because they are hypothetical; while one
+        // field is hovered the other two step back, which is the half of the
+        // bar <-> grid linkage that is visible in the bar itself.
+        int mix = view.ghost ? 45 : 0;
+        if (s.hoverSeg >= 0 && s.hoverSeg != segment)
+            mix += (100 - mix) * 35 / 100;
+        const COLORREF fillC = mixColor(floatSegColorByField(segment), kBackground, mix, 100);
+        HBRUSH b = CreateSolidBrush(fillC);
+        FillRect(dc, &r, b);
+        DeleteObject(b);
+        frameRect(dc, r, kSeparator);
+        drawCenteredText(dc, r, wideFromUtf8(text), mix == 0 ? RGB(18, 20, 24) : kPanelText);
+        if (s.hoverSeg == segment) {
+            frameRect(dc, RECT { r.left + 1, r.top + 1, r.right - 1, r.bottom - 1 }, kFocus);
+            frameRect(dc, RECT { r.left + 2, r.top + 2, r.right - 2, r.bottom - 2 }, kFocus);
+        }
+    }
+    DeleteObject(segFont);
+    DeleteObject(capFont);
 }
 
 void paint(HWND hwnd)
@@ -1536,6 +1801,23 @@ void paint(HWND hwnd)
         MoveToEx(mem, s.tabDividerX, 8, nullptr);
         LineTo(mem, s.tabDividerX, kTopH - 8);
         DeleteObject(SelectObject(mem, old));
+    }
+    // Float-bar toggle: the free right end of the top bar, drawn as a pill so it
+    // reads as a switch rather than a sixth tab.
+    {
+        const RECT r = s.rcBarToggle;
+        HBRUSH pb = CreateSolidBrush(s.floatBar ? kAccent : kBitOff);
+        HPEN pp = CreatePen(PS_SOLID, 1, s.floatBar ? kAccent : kSeparator);
+        HGDIOBJ oldB = SelectObject(mem, pb);
+        HGDIOBJ oldP = SelectObject(mem, pp);
+        RoundRect(mem, r.left, r.top, r.right, r.bottom, 12, 12);
+        SelectObject(mem, oldB);
+        SelectObject(mem, oldP);
+        DeleteObject(pb);
+        DeleteObject(pp);
+        SelectObject(mem, tabFont);
+        drawCenteredText(mem, r, wideFromUtf8(s.zh ? "浮点条带" : "float bar"),
+                         s.floatBar ? RGB(18, 20, 24) : kLabelText);
     }
 
     // ---- expression row ----
@@ -1603,6 +1885,7 @@ void paint(HWND hwnd)
     }
 
     // ---- content area ----
+    const FloatView view = floatView();
     if (bits) {
         for (int row = 0; row < s.gridRows; ++row) {
             const int cellTop = s.gridTop + row * (kLabelH + kCellH + kRowGap);
@@ -1622,12 +1905,21 @@ void paint(HWND hwnd)
                 const bool on = getBit(s.value, bit) != 0;
                 RECT cell { cellLeft(col), cellTop + kLabelH,
                             cellLeft(col) + s.cellW - 4, cellTop + kLabelH + kCellH };
-                HBRUSH fill = CreateSolidBrush(on ? kBitOn : kBitOff);
+                COLORREF cellBg = on ? kBitOn : kBitOff;
+                const int bitSeg = view.spec ? binlab::floatSegment(bit, *view.spec) : -1;
+                if (bitSeg >= 0 && s.hoverSeg == bitSeg)
+                    cellBg = mixColor(cellBg, floatSegColorByField(bitSeg), 30, 100);
+                HBRUSH fill = CreateSolidBrush(cellBg);
                 FillRect(mem, &cell, fill);
                 DeleteObject(fill);
-                if (s.isFloat) {
+                if (view.spec) {
+                    // The 2px band is the always-on half of the float story: the
+                    // bar explains it, but the field boundary is never hidden.
                     RECT band { cell.left, cell.top, cell.right, cell.top + 2 };
-                    HBRUSH sb = CreateSolidBrush(floatSegColor(bit, s.width));
+                    COLORREF c = floatSegColor(bit, *view.spec);
+                    if (view.ghost)
+                        c = mixColor(c, kBackground, 45, 100);
+                    HBRUSH sb = CreateSolidBrush(c);
                     FillRect(mem, &band, sb);
                     DeleteObject(sb);
                 }
@@ -1661,6 +1953,10 @@ void paint(HWND hwnd)
         drawCenteredText(mem, l2, wideFromUtf8(line2), kLabelText);
     }
 
+    // ---- float composition bar ----
+    if (bits)
+        paintFloatBar(mem);
+
     // ---- status bar: row 1 = context + focus/feedback, row 2 = parity ----
     const int statusTop = h - kStatusH;
     RECT statusRect { 0, statusTop, w, h };
@@ -1678,10 +1974,13 @@ void paint(HWND hwnd)
     SelectObject(mem, statusFont);
     std::string left;
     if (bits) {
-        if (s.isFloat)
-            left = std::string(s.width == 32 ? "f32" : "f64") + " · IEEE-754 binary"
-                 + std::to_string(s.width) + " · " + s.floatText;
-        else if (s.cMode)
+        if (s.isFloat) {
+            // Named from the container table, so a new row there is spoken for
+            // here without touching this line.
+            const binlab::FloatSpec* f = binlab::floatByBits(s.width);
+            left = f ? std::string(f->name) + " · IEEE-754 " + f->ieee + " · " + s.floatText
+                     : std::to_string(s.width) + " bit float · " + s.floatText;
+        } else if (s.cMode)
             left = "C · " + binlab::typeNameFor(s.width, s.isSigned) + " · "
                  + std::to_string(s.width) + " bit · "
                  + (s.isSigned ? (s.zh ? "有符号" : "signed") : (s.zh ? "无符号" : "unsigned"));
@@ -1904,10 +2203,25 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 s.focusBit = -1;
                 s.dragging = false;
                 s.hoverParity = -1;
+                s.hoverSeg = -1;
                 s.historyOpen = false;
                 relayout(hwnd);
                 return 0;
             }
+        }
+        if (inRect(s.rcBarToggle, x, y)) {
+            s.floatBar = !s.floatBar;
+            s.hoverSeg = -1;
+            winshun::debug(std::string("ra9fael.binarylab: setFloatBar ") + (s.floatBar ? "on" : "off"));
+            if (s.mode != EditorSpec::Mode::Bits) {
+                // Only the bits page has a bar row; say where it went instead of
+                // letting the pill change colour with no visible effect.
+                s.msg = s.floatBar ? (s.zh ? "条带已开 · 位模式页显示" : "bar on · see the Bits tab")
+                                   : (s.zh ? "条带已关" : "bar off");
+                s.msgTick = GetTickCount();
+            }
+            relayout(hwnd); // the bar row is the only height this can change
+            return 0;
         }
         if (s.mode == EditorSpec::Mode::Settings) {
             if (inRect(s.rcClearHistory, x, y)) {
@@ -1962,6 +2276,12 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     return 0;
                 }
             }
+            for (int segment = 0; segment < 3; ++segment) {
+                if (inRect(s.rcBarSeg[barIndexForSegment(segment)], x, y)) {
+                    copyBarSegment(hwnd, segment);
+                    return 0;
+                }
+            }
             for (int i = 0; i < 5; ++i) {
                 if (inRect(s.rcChip[i], x, y)) {
                     static const char* const kNames[5] = { "HEX", "OCT", "BIN", "DEC", "ALL" };
@@ -1992,13 +2312,24 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             InvalidateRect(hwnd, nullptr, TRUE);
         }
         int hover = -1;
+        int seg = -1;
         if (s.mode == EditorSpec::Mode::Bits && s.evalError.empty()) {
             for (int i = 0; i < 4; ++i)
                 if (inRect(s.rcParity[i], x, y))
                     hover = i;
+            // Bar and grid share one hovered field: pointing at a block names
+            // the bits it owns, pointing at a bit names the block it belongs to.
+            const FloatView view = floatView();
+            for (int segment = 0; segment < 3; ++segment)
+                if (view.spec && inRect(s.rcBarSeg[barIndexForSegment(segment)], x, y))
+                    seg = segment;
+            const int bit = hitBit(x, y);
+            if (seg < 0 && bit >= 0 && view.spec)
+                seg = binlab::floatSegment(bit, *view.spec);
         }
-        if (hover != s.hoverParity) {
+        if (hover != s.hoverParity || seg != s.hoverSeg) {
             s.hoverParity = hover;
+            s.hoverSeg = seg;
             InvalidateRect(hwnd, nullptr, TRUE);
         }
         return 0;
@@ -2079,10 +2410,13 @@ void threadMain(EditorSpec spec)
     s.hostPack = spec.hostPack;
     s.hostBitsEnter = spec.hostBitsEnter;
     s.hostEvalMode = spec.hostEvalMode;
+    s.hostFloatBar = spec.hostFloatBar;
     s.cMode = spec.cMode;
+    s.floatBar = spec.hostFloatBar == "on";
     s.focusBit = -1;
     s.dragging = false;
     s.hoverParity = -1;
+    s.hoverSeg = -1;
     s.evalError.clear();
     s.msg.clear();
     s.isFloat = false;

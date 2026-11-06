@@ -58,6 +58,14 @@
       "hint": {"zh": "fixed=每步结果限制在位宽内并报告回绕；c=按 C 语言整数提升，结果类型自动推导（显式类型前缀始终按固定宽度）", "en": "fixed=every step stays inside the width and wrapping is reported; c=C integer promotions, result type derived (an explicit type prefix always evaluates fixed)"},
       "default": "fixed",
       "options": ["fixed", "c"]
+    },
+    {
+      "key": "floatBar",
+      "type": "choice",
+      "title": {"zh": "浮点条带", "en": "Float composition bar"},
+      "hint": {"zh": "工作台打开时是否展开 S/E/M 比例条；窗口内顶栏右端的开关可随时切换", "en": "Whether the workbench opens with the S/E/M bar shown; the top-bar pill toggles it at any time"},
+      "default": "off",
+      "options": ["off", "on"]
     }
   ],
   "commands": [

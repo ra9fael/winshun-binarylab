@@ -25,6 +25,7 @@ struct Settings {
     int defaultPack = 0;
     bool editorOnEnter = false;
     bool cMode = false;            // evalMode=c: C integer promotions
+    bool floatBar = false;         // floatBar=on: workbench opens with the bar shown
 };
 
 Settings readSettings(const winshun::Json& s)
@@ -47,6 +48,7 @@ Settings readSettings(const winshun::Json& s)
         st.defaultPack = std::stoi(pack);
     st.editorOnEnter = binlab::lower(text("bitsEnter", "copy")) == "editor";
     st.cMode = binlab::lower(text("evalMode", "fixed")) == "c";
+    st.floatBar = binlab::lower(text("floatBar", "off")) == "on";
     return st;
 }
 
@@ -565,6 +567,7 @@ struct BinaryLab : winshun::Plugin {
             spec.hostPack = st.defaultPack;
             spec.hostBitsEnter = st.editorOnEnter ? "editor" : "copy";
             spec.hostEvalMode = st.cMode ? "c" : "fixed";
+            spec.hostFloatBar = st.floatBar ? "on" : "off";
             spec.dataDir = dataDir(); // expression history lives in the host data dir
             std::string error;
             if (!binlab::openEditorWindow(spec, error)) {
