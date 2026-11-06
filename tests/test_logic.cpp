@@ -4,6 +4,7 @@
 // The layout tests compare against real compiler output produced by
 // #pragma pack, sizeof, alignof and offsetof in this translation unit.
 #include "logic.h"
+#include "formats.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -140,6 +141,81 @@ void checkFrameOracle(int pack, std::size_t expectedSize, std::size_t expectedAl
     CHECK(memberOffset(l, "data", found) == expectedData && found, label + " offsetof(data)");
     CHECK(l.assertions.find("== " + std::to_string(expectedSeq)) != std::string::npos,
           label + " static_assert text");
+}
+
+// ---- record format helpers ----------------------------------------------------
+// Little-endian packers, the C++ twin of hextract's struct.pack('<...').
+void putLE(std::vector<std::uint8_t>& out, std::uint64_t v, int bytes)
+{
+    for (int i = 0; i < bytes; ++i)
+        out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+}
+
+std::vector<std::uint8_t> interlockBlob()
+{
+    std::vector<std::uint8_t> b;
+    const auto pkt = [&](std::uint32_t s, std::uint32_t ns, std::uint32_t id, std::uint32_t addr,
+                         std::vector<std::int32_t> integral, std::vector<std::uint32_t> count) {
+        putLE(b, s, 4); putLE(b, ns, 4); putLE(b, id, 4); putLE(b, addr, 4);
+        for (std::int32_t v : integral) putLE(b, static_cast<std::uint32_t>(v), 4);
+        for (std::uint32_t v : count) putLE(b, v, 4);
+    };
+    pkt(100, 200, 1, 0xabc, {1, 2, 3, 4, 5, 6}, {7, 0, 0, 0, 0, 0});
+    pkt(100, 200, 2, 0xabc, {-5, 2, 3, 4, 5, 6}, {0, 0, 0, 0, 0, 0});
+    pkt(0, 0, 0, 0, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0});
+    return b;
+}
+
+std::vector<std::uint8_t> msbFirst(const std::vector<std::uint8_t>& blob, std::size_t wb)
+{
+    std::vector<std::uint8_t> out;
+    for (std::size_t i = 0; i < blob.size(); i += wb)
+        for (std::size_t k = 0; k < wb; ++k)
+            out.push_back(blob[i + wb - 1 - k]);
+    return out;
+}
+
+std::string toHex(const std::vector<std::uint8_t>& b)
+{
+    std::string s;
+    char cell[4];
+    for (std::uint8_t v : b) {
+        std::snprintf(cell, sizeof cell, "%02x", v);
+        s += cell;
+    }
+    return s;
+}
+
+const binlab::Cell& cellOf(const binlab::RecordFormat& f, const binlab::Record& r, const std::string& column)
+{
+    for (std::size_t i = 0; i < f.columns.size(); ++i)
+        if (f.columns[i] == column)
+            return r.cells[i];
+    static binlab::Cell none;
+    return none;
+}
+
+binlab::Outcome<binlab::RecordFormat> compileOne(const std::string& name, int wordBits,
+                                                std::vector<binlab::RawField> fields,
+                                                std::vector<binlab::RawRule> rules = {})
+{
+    binlab::RawFormat raw;
+    raw.name = name;
+    raw.source = "test";
+    raw.wordBits = wordBits;
+    raw.byteOrder = "lsb-first";
+    raw.fields = std::move(fields);
+    raw.rules = std::move(rules);
+    return binlab::compileFormat(raw);
+}
+
+binlab::RawField rawField(const char* name, const char* type, int count = 1)
+{
+    binlab::RawField f;
+    f.name = name;
+    f.type = type;
+    f.count = count;
+    return f;
 }
 
 } // namespace
@@ -669,6 +745,140 @@ int main()
               "an absurd width is treated as a typo, not a container");
     }
 
+    // ---- record formats: decode, the hextract test vectors -------------------
+    {
+        const binlab::FormatSet set = binlab::builtinFormatSet();
+        CHECK(set.entries.size() == 2 && set.entries[0].ok && set.entries[1].ok, "both built-in formats compile");
+        const binlab::RecordFormat* f512 = set.find("blm_interlock_512");
+        CHECK(f512 != nullptr && f512->recordBytes() == 64 && f512->msbFirst, "interlock: 64 B, msb-first");
+        if (f512 != nullptr) {
+            CHECK(f512->columns.size() == 16 && f512->columns[0] == "wr_time_s" && f512->columns[3] == "lock_addr"
+                      && f512->columns[4] == "integral0" && f512->columns[9] == "integral5",
+                  "interlock columns expand arrays");
+            const auto r = binlab::evalRecords("fmt blm_interlock_512 " + toHex(msbFirst(interlockBlob(), 64)), set);
+            CHECK(r.success && r.value.records.size() == 3 && r.value.trailing == 0, "interlock: three records");
+            if (r.success && r.value.records.size() == 3) {
+                const binlab::Record& r0 = r.value.records[0];
+                CHECK(cellOf(*f512, r0, "wr_time_s").u == 100 && cellOf(*f512, r0, "wr_time_ns").u == 200,
+                      "interlock r0 time");
+                CHECK(cellOf(*f512, r0, "data_id").u == 1 && cellOf(*f512, r0, "lock_addr").u == 0xabc,
+                      "interlock r0 id / addr");
+                CHECK(cellOf(*f512, r0, "lock_addr").text == "0xabc", "radix=hex displays 0xabc");
+                bool seq = true;
+                for (int i = 0; i < 6; ++i)
+                    seq = seq && cellOf(*f512, r0, "integral" + std::to_string(i)).i == i + 1;
+                CHECK(seq, "interlock r0 integral = 1..6");
+                CHECK(cellOf(*f512, r0, "count0").u == 7 && cellOf(*f512, r0, "count1").u == 0, "interlock r0 count");
+                CHECK(cellOf(*f512, r.value.records[1], "integral0").i == -5
+                          && cellOf(*f512, r.value.records[1], "integral0").text == "-5",
+                      "interlock r1 integral0 = -5");
+                CHECK(r.value.records[1].offset == 64, "record offset is the input byte offset");
+            }
+            // The order word overrides the format default (hextract reverse=).
+            const std::string lsbText = toHex(std::vector<std::uint8_t>(interlockBlob().begin(), interlockBlob().begin() + 64));
+            const auto asLsb = binlab::evalRecords("fmt blm_interlock_512 lsb " + lsbText, set);
+            CHECK(asLsb.success && !asLsb.value.msbFirst && cellOf(*f512, asLsb.value.records[0], "wr_time_s").u == 100,
+                  "lsb override reads the stream as is");
+            const auto asMsb = binlab::evalRecords("fmt blm_interlock_512 msb " + lsbText, set);
+            CHECK(asMsb.success && cellOf(*f512, asMsb.value.records[0], "wr_time_s").u != 100,
+                  "msb reverses each record first");
+            const auto trailing = binlab::evalRecords(
+                "fmt blm_interlock_512 " + toHex(msbFirst(interlockBlob(), 64)) + "deadbeef", set);
+            CHECK(trailing.success && trailing.value.records.size() == 3 && trailing.value.trailing == 4,
+                  "trailing bytes are counted, not decoded");
+            const auto shortRec = binlab::evalRecords("fmt blm_interlock_512 " + std::string(126, '0'), set);
+            CHECK(!shortRec.success && shortRec.failure.code == "E_SHORT_RECORD"
+                      && shortRec.failure.message.find("need 64 B") != std::string::npos,
+                  "63 bytes is not a record");
+        }
+        const binlab::RecordFormat* f256 = set.find("BLM_RAWDATA_256");
+        CHECK(f256 != nullptr && f256->recordBytes() == 32 && !f256->msbFirst, "rawdata: 32 B, lsb-first, case-insensitive");
+        if (f256 != nullptr) {
+            std::vector<std::uint8_t> blob;
+            putLE(blob, 1, 4); putLE(blob, 2, 4);
+            for (int v : {1, 2, 3, 4, 5, 6}) putLE(blob, static_cast<std::uint64_t>(v), 2);
+            for (int v : {9, 0, 0, 0, 0, 0}) putLE(blob, static_cast<std::uint64_t>(v), 2);
+            const auto r = binlab::evalRecords("fmt blm_rawdata_256 " + toHex(blob), set);
+            CHECK(r.success && r.value.records.size() == 1, "rawdata: one record");
+            if (r.success && !r.value.records.empty()) {
+                CHECK(cellOf(*f256, r.value.records[0], "wr_time_ns").u == 2, "rawdata wr_time_ns");
+                CHECK(cellOf(*f256, r.value.records[0], "integral5").i == 6, "rawdata integral5");
+                CHECK(cellOf(*f256, r.value.records[0], "count0").u == 9, "rawdata count0");
+            }
+        }
+
+        // Strict hex: real separators pass, anything else is an error with
+        // its position instead of being spliced into the data.
+        const auto sep = binlab::parseStrictHex("0x01, 02:03 04_05;06\n0X07");
+        CHECK(sep.success && sep.value.size() == 7 && sep.value[6] == 7, "separators and 0x prefixes are accepted");
+        const auto noisy = binlab::parseStrictHex("ILA 01 02");
+        CHECK(!noisy.success && noisy.failure.code == "E_BAD_TOKEN"
+                  && noisy.failure.message.find("character 1") != std::string::npos,
+              "a non-hex word is rejected with its position");
+        CHECK(binlab::parseStrictHex("abc").failure.code == "E_HEX_ODD", "odd hex digit count");
+        CHECK(binlab::parseStrictHex(std::string(8194, '0')).failure.code == "E_BYTES_TOO_LARGE", "4096 byte cap");
+        CHECK(binlab::evalRecords("fmt nosuch 00", set).failure.code == "E_FORMAT_NAME", "unknown format name");
+        CHECK(binlab::evalRecords("fmt", set).failure.code == "E_FORMAT_NAME", "missing format name");
+    }
+
+    // ---- record formats: bit slices, scale, radix and validation ------------
+    {
+        binlab::RawField flag = rawField("flag7", "u8");
+        flag.hasBits = true; flag.bitHi = 7; flag.bitLo = 7;
+        binlab::RawField nib = rawField("nib", "u16");
+        nib.hasBits = true; nib.bitHi = 3; nib.bitLo = 0;
+        binlab::RawField mv = rawField("mv", "u8");
+        mv.hasScale = true; mv.scale = 2.5;
+        const auto bf = compileOne("bf", 32, {flag, nib, mv});
+        CHECK(bf.success, "bitfield format compiles");
+        if (bf.success) {
+            const binlab::RecordsEval e = binlab::decodeRecords(bf.value, false, {0x85, 0xcd, 0xab, 4});
+            CHECK(e.records.size() == 1, "one 4-byte record");
+            CHECK(cellOf(bf.value, e.records[0], "flag7").u == 1, "bits = 7 takes the top bit of 0x85");
+            CHECK(cellOf(bf.value, e.records[0], "nib").u == 0xd, "bits = 3:0 of 0xabcd");
+            CHECK(cellOf(bf.value, e.records[0], "mv").u == 4 && cellOf(bf.value, e.records[0], "mv").text == "10",
+                  "scale 2.5 displays 10, the raw value stays 4");
+        }
+        binlab::RawField hexNeg = rawField("h", "i8");
+        hexNeg.radix = "hex";
+        const auto hn = compileOne("hn", 8, {hexNeg});
+        CHECK(hn.success && binlab::decodeRecords(hn.value, false, {0xFF}).records[0].cells[0].text == "-0x1",
+              "radix=hex prints negatives as -0x1");
+        binlab::RawField h16 = rawField("half", "f16");
+        const auto fh = compileOne("fh", 16, {h16});
+        CHECK(fh.success && binlab::decodeRecords(fh.value, false, {0x00, 0x3E}).records[0].cells[0].text == "1.5",
+              "f16 fields decode through the shared float table");
+        const auto pad = compileOne("pad", 32, {rawField("a", "u8")});
+        CHECK(pad.success && binlab::decodeRecords(pad.value, false, {1, 2, 3, 4}).records[0].cells[0].u == 1,
+              "fields may leave padding at the top of the record");
+
+        CHECK(!compileOne("x", 8, {rawField("a", "u9")}).success, "unknown type");
+        CHECK(!compileOne("x", 8, {rawField("a", "u16le")}).success, "fields take no endian suffix");
+        CHECK(!compileOne("x", 7, {rawField("a", "u8")}).success, "word_bits must be a multiple of 8");
+        CHECK(!compileOne("x", 8, {rawField("a", "u16")}).success, "fields overflow the word");
+        CHECK(!compileOne("x", 8, {rawField("a", "u8"), rawField("a", "u8")}).success, "duplicate field name");
+        CHECK(!compileOne("x", 8, {rawField("_a", "u8")}).success, "private names are rejected");
+        CHECK(!compileOne("x", 8, {rawField("any", "u8")}).success, "reserved names are rejected");
+        binlab::RawField wide = rawField("a", "u8");
+        wide.hasBits = true; wide.bitHi = 8; wide.bitLo = 0;
+        CHECK(!compileOne("x", 16, {wide}).success, "bits beyond the type");
+        binlab::RawField fbits = rawField("a", "f32");
+        fbits.hasBits = true; fbits.bitHi = 3; fbits.bitLo = 0;
+        CHECK(!compileOne("x", 32, {fbits}).success, "bits needs an integer type");
+        CHECK(!compileOne("x", 8, {rawField("a", "u8", 0)}).success, "count must be >= 1");
+        binlab::RawFormat order;
+        order.name = "x"; order.wordBits = 8; order.byteOrder = "raw"; order.fields = {rawField("a", "u8")};
+        CHECK(!binlab::compileFormat(order).success, "byte_order 'raw' is rejected");
+        CHECK(!compileOne("x", 8192, {rawField("a", "u8")}).success, "record size cap");
+
+        binlab::FormatSet set = binlab::builtinFormatSet();
+        binlab::RawFormat user = binlab::builtinRawFormats()[0];
+        user.source = "mine.toml";
+        user.description = "user copy";
+        binlab::addFormat(set, binlab::entryFor(user));
+        CHECK(set.entries.size() == 2 && set.entries[0].source == "mine.toml" && set.notes.size() == 1,
+              "a user format with a built-in name overrides it and says so");
+    }
     std::cout << "binarylab logic tests: " << (g_total - g_failed) << "/" << g_total << " passed\n";
     if (g_failed)
         std::cerr << g_failed << " test(s) failed\n";
