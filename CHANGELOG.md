@@ -58,8 +58,23 @@ future phases live in [ROADMAP.md](ROADMAP.md).
 - Records mode in the byte workbench: format dropdown, records table with
   column layout, record / field selection with a value chip, LSB / MSB order
   buttons that rewrite the expression, Shift+wheel horizontal column scroll.
+- Blank workbench entries for every content tab: `bytes ` and `struct ` (the
+  keyword plus a space) now show a valid first row that opens the bytes /
+  struct tab with an empty expression box, matching `bits `; a plain `struct`
+  query also gains a dedicated `struct.open.workbench` entry row.
+- The bytes expression accepts the hex keyword being omitted: a leading type
+  token (`u32 0x88775545`) or bare hex data (`deadbeefdeadbeef`, run together)
+  is treated as hex, defaulting to `u8` when no type is given.
 
 ### Changed
+- The byte workbench hands-off button is now labelled「送到位运算页」/ "Send to
+  Bits" so its purpose is explicit; the bytes-page placeholder and empty-state
+  text name the bare-hex and `fmt <name> <hex...>` forms.
+- The float-bar pill (layout, drawing, click) exists on the bits page only.
+- The HEX / DEC|FLOAT / BIN chips and the type buttons on the byte workbench
+  are measured from their worst-case labels (u64 bits, localized button text),
+  wrap the BIN chip to a second row when the window is narrow, and feed the
+  minimum window width, so no value is clipped any more.
 - **Behaviour change:** a plain decimal under a float prefix is encoded as a
   value: `f32 88` = `0x42B00000` (was the raw pattern `0x58`), `f16 65504`
   = `0x7BFF` (was `0xFFE0`). Raw patterns use `0x`/`0b`/`0o` or `@`.

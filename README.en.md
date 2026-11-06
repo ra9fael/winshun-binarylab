@@ -99,7 +99,10 @@ TYPE : u8 i8 u16[le|be] i16[le|be] u32[le|be] i32[le|be]
 ```
 
 `u16` / `u32` / `u64` / `f32` / `f64` without a suffix use the `defaultEndian`
-setting; an explicit `le` / `be` always wins. Separators (`space , : ; _ -`)
+setting; an explicit `le` / `be` always wins. **The format keyword is optional**:
+when the first token is a type word (`u32 0x88775545`) or bare hex data
+(`deadbeefdeadbeef`, run together is fine) the input is treated as `hex`, with
+`u8` as the default type. Separators (`space , : ; _ -`)
 and `0x` / `0b` / `0o` prefixes are accepted. A compact hex token must have an
 even number of digits, a `bin` token exactly 8 bits, an `oct` token `000..377`.
 Input is capped at 16 KiB and 4096 decoded bytes. A trailing incomplete word is
@@ -198,11 +201,12 @@ host's action menu. The split is chosen by the `bitsEnter` setting.
 | `bytes` | `copyPrimary` | `openEditor` — open the byte workbench | `chainQuery` | `copyDetail` |
 | `struct` | `copyPrimary` (the summary expands members) | `copyDetail` | `chainQuery` | — |
 
-Exception: the **first result row** of both `bits` and `bytes` is a dedicated
+Exception: the **first result row** of `bits`, `bytes` and `struct` is a dedicated
 workbench entry. Regardless of `bitsEnter`, its Enter is `openEditor` and
-Ctrl+Enter is `copyPrimary`. With `bits ` alone (keyword plus a space) that
-same first row appears, so Enter opens a blank workbench immediately;
-`bytes ` with no arguments still shows only the help examples.
+Ctrl+Enter is `copyPrimary`. With `bits ` / `bytes ` / `struct ` alone (keyword
+plus a space) that
+same first row appears, so Enter opens a blank workbench for that tab immediately
+(empty expression box, help examples below it).
 
 On a `struct` summary row Enter expands into one row per member/padding via
 `effects.replace` instead of copying.
@@ -312,7 +316,8 @@ the clipboard, or open a window. Copy and `setQuery` effects are returned only
 when the user triggers an action. With `bits ` and no arguments, the first row
 is a **valid** "Open binary workbench" entry (Enter opens a blank workbench),
 followed by three example rows (`valid: false`, Tab fills the example).
-`bytes ` / `struct ` with no arguments still show only the examples. A parse
+`bytes ` / `struct ` likewise show a blank-workbench entry for their tab plus
+the help examples. A parse
 failure shows one `valid: false` row with an error code and a corrected example.
 
 ### Byte workbench (bytes page)
@@ -344,8 +349,9 @@ scrolls records, Shift+wheel scrolls columns.
 
 The expression line works like the bits page: it evaluates as you type, keeps
 the last good result on error, shows the full error in the status bar, and a
-cleared box is a blank state. "→ Bits" hands the active word's raw bits (or
-the selected field's, in records mode) to the bits page. Esc closes the window
+cleared box is a blank state. "Send to Bits" hands the active word's raw bits (or
+the selected field's, in records mode) to the bits page; the float-bar toggle
+lives on the bits page only. Esc closes the window
 (closing the dropdown first).
 
 ## Settings
