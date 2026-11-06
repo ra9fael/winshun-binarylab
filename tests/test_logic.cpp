@@ -775,7 +775,8 @@ int main()
                 CHECK(r.value.records[1].offset == 64, "record offset is the input byte offset");
             }
             // The order word overrides the format default (hextract reverse=).
-            const std::string lsbText = toHex(std::vector<std::uint8_t>(interlockBlob().begin(), interlockBlob().begin() + 64));
+            const std::vector<std::uint8_t> blob = interlockBlob();
+            const std::string lsbText = toHex(std::vector<std::uint8_t>(blob.begin(), blob.begin() + 64));
             const auto asLsb = binlab::evalRecords("fmt blm_interlock_512 lsb " + lsbText, set);
             CHECK(asLsb.success && !asLsb.value.msbFirst && cellOf(*f512, asLsb.value.records[0], "wr_time_s").u == 100,
                   "lsb override reads the stream as is");
@@ -878,6 +879,98 @@ int main()
         binlab::addFormat(set, binlab::entryFor(user));
         CHECK(set.entries.size() == 2 && set.entries[0].source == "mine.toml" && set.notes.size() == 1,
               "a user format with a built-in name overrides it and says so");
+    }
+    // ---- record formats: the bounded rule evaluator ---------------------------
+    {
+        const binlab::FormatSet set = binlab::builtinFormatSet();
+        const binlab::RecordFormat* f512 = set.find("blm_interlock_512");
+        const auto r = binlab::evalRecords("fmt blm_interlock_512 " + toHex(msbFirst(interlockBlob(), 64)), set);
+        // hextract's GUI smoke test: rule1 (count) / rule0 (negative) / rule2 (all zero)
+        CHECK(r.success && r.value.records.size() == 3 && r.value.records[0].rule == 1
+                  && r.value.records[1].rule == 0 && r.value.records[2].rule == 2,
+              "first matching rule per row matches hextract");
+        CHECK(r.success && r.value.ruleHits == 3 && r.value.ruleErrors == 0, "three hits, no errors");
+        CHECK(f512 != nullptr && f512->rules[0].name == "Rule 1", "unnamed rules are numbered");
+
+        const auto withRule = [&](const char* when) {
+            binlab::RawRule rr;
+            rr.when = when;
+            rr.bg = "#ff0000";
+            return compileOne("r", 32, {rawField("a", "i8"), rawField("arr", "u8", 3)}, {rr});
+        };
+        const auto row = [&](const binlab::RecordFormat& f, std::vector<std::uint8_t> bytes) {
+            return binlab::decodeRecords(f, false, std::move(bytes)).records[0];
+        };
+        const auto matches = [&](const char* when, std::vector<std::uint8_t> bytes) {
+            const auto c = withRule(when);
+            if (!c.success)
+                return -2;
+            return row(c.value, std::move(bytes)).rule;
+        };
+        CHECK(matches("a < 0", {0xFF, 1, 2, 3}) == 0, "signed field below zero");
+        CHECK(matches("0 < a <= 5", {3, 0, 0, 0}) == 0 && matches("0 < a <= 5", {6, 0, 0, 0}) == -1,
+              "chained comparison");
+        CHECK(matches("len(arr) == 3 and arr[-1] == 3", {0, 1, 2, 3}) == 0, "len and a negative index");
+        CHECK(matches("min(arr) == 1 and max(arr) == 3", {0, 1, 2, 3}) == 0, "min / max of an array");
+        CHECK(matches("max(a, 7) == 7", {2, 0, 0, 0}) == 0, "max of two numbers");
+        CHECK(matches("abs(a) == 2", {0xFE, 0, 0, 0}) == 0, "abs");
+        CHECK(matches("any(v > 2 for v in arr)", {0, 1, 2, 3}) == 0, "any with a generator");
+        CHECK(matches("all(v & 1 for v in arr)", {0, 1, 3, 5}) == 0, "bit ops inside a generator");
+        CHECK(matches("sum_ok == 1" , {0, 0, 0, 0}) == -2, "unknown names are rejected at load");
+        CHECK(matches("-7 // 2 == -4 and -7 % 2 == 1 and 7 / 2 == 3.5 and 2 ** 10 == 1024", {0, 0, 0, 0}) == 0,
+              "Python integer division, modulo, true division and power");
+        CHECK(matches("not a or True", {0, 0, 0, 0}) == 0, "not / or / True");
+
+        const auto err = withRule("arr[5] == 0");
+        CHECK(err.success, "an index is only checked at evaluation time");
+        if (err.success) {
+            const binlab::RecordsEval e = binlab::decodeRecords(err.value, false, {0, 1, 2, 3});
+            CHECK(e.records[0].rule == -1 && e.records[0].ruleError.find("out of range") != std::string::npos
+                      && e.ruleErrors == 1,
+                  "an out-of-range index is a row error, not a crash");
+        }
+        CHECK(!withRule("__import__('os')").success, "__import__ is rejected");
+        CHECK(!withRule("a.bit_length() > 1").success, "attribute access is rejected");
+        CHECK(!withRule("_secret > 1").success, "private names are rejected");
+        CHECK(!withRule("nosuch < 1").success, "unknown names are rejected");
+        CHECK(!withRule("lambda: 1").success, "lambda is rejected");
+        CHECK(!withRule("sum(arr) > 1").success, "only whitelisted calls");
+        CHECK(!withRule("arr[0:2] == 1").success, "slices are rejected");
+        CHECK(!withRule("a == 'x'").success, "strings are rejected");
+        CHECK(!withRule("any(v for v in arr if v)").success, "filtered generators are rejected");
+        std::string deep;
+        for (int i = 0; i < 40; ++i)
+            deep += "(";
+        deep += "a";
+        for (int i = 0; i < 40; ++i)
+            deep += ")";
+        const auto tooDeep = withRule(deep.c_str());
+        CHECK(!tooDeep.success && tooDeep.failure.message.find("deeper") != std::string::npos, "depth cap");
+        std::string wide = "a";
+        for (int i = 0; i < 200; ++i)
+            wide += " + a";
+        const auto tooWide = withRule(wide.c_str());
+        CHECK(!tooWide.success && tooWide.failure.message.find("nodes") != std::string::npos, "node cap");
+        const auto slow = withRule("1 ** 5000 > 0");
+        CHECK(slow.success && row(slow.value, {0, 0, 0, 0}).ruleError.find("steps") != std::string::npos,
+              "step cap stops a runaway power");
+        const auto big = withRule("2 ** 70 > 0");
+        CHECK(big.success && row(big.value, {0, 0, 0, 0}).ruleError.find("overflow") != std::string::npos,
+              "integer overflow is a row error instead of a silent wrap");
+
+        binlab::RawRule a1;
+        a1.when = "a > 0";
+        a1.bg = "#ff0000";
+        binlab::RawRule a2 = a1;
+        a2.bg = "#00ff00";
+        const auto dup = compileOne("d", 8, {rawField("a", "u8")}, {a1, a2});
+        CHECK(dup.success && dup.value.warnings.size() == 1, "duplicate rule is a warning");
+        binlab::RawRule noColor;
+        noColor.when = "a > 0";
+        CHECK(!compileOne("d", 8, {rawField("a", "u8")}, {noColor}).success, "a rule needs a color");
+        binlab::RawRule badColor = a1;
+        badColor.bg = "red";
+        CHECK(!compileOne("d", 8, {rawField("a", "u8")}, {badColor}).success, "colors must be #rrggbb");
     }
     std::cout << "binarylab logic tests: " << (g_total - g_failed) << "/" << g_total << " passed\n";
     if (g_failed)
