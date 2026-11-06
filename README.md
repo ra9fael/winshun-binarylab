@@ -34,6 +34,10 @@
 环境要求：Windows 10/11 x64、CMake 3.21+，以及 Visual Studio 2022 及以上（MSVC）
 或 MinGW-w64 GCC 13+。打包和集成测试需要 Python 3.10+。
 
+> `qml` 分支的 QML 工作台原型额外需要 Qt 6 和旁边的 WinShun 源码 checkout
+> （CMake 变量 `WINSHUN_DIR`，默认 `../WinShun`）。预览原型无需宿主：
+> `binarylab.exe --bits --app-dir <Win顺安装目录> [表达式]`。
+
 ```powershell
 cmake -S . -B build -A x64                 # MSVC；MinGW 用 -G "MinGW Makefiles"
 cmake --build build --config Release       # 在 plugin.json 旁边生成 binarylab.exe

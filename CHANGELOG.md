@@ -9,6 +9,17 @@ future phases live in [ROADMAP.md](ROADMAP.md).
 ## [Unreleased]
 
 ### Added
+- An experimental QML workbench prototype on the `qml` branch: `binarylab.exe`
+  becomes a Qt-free stub that loads `BinaryLabApp.dll`, built on Win顺's Qt 6,
+  which serves the plugin protocol on a worker thread and runs the QML window
+  on the GUI thread (the same split as Win顺's own capture plugin). The
+  prototype covers the bits page only — expression line, width/signedness
+  toolbar, bit grid, base chips, parity row — reusing Win顺's shared QML
+  controls (Theme, TitleBar, InputBox, FlatButton); the Win32 workbench stays
+  the shipping UI until the port completes. `binarylab.exe --bits
+  [--app-dir <folder>] [expression]` opens the prototype without the host.
+  Building the branch needs a Qt 6, found through `WINSHUN_DIR` (a WinShun
+  checkout, default `../WinShun`).
 - Full-precedence integer expressions in `bits` and in the workbench
   expression line: unary `~ + -`, right-associative `**`, `* / %`, `+ -`,
   `<< >> rol ror`, `& ^ |`, and parentheses (`u8 1 + 2 * 3` = 7,

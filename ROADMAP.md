@@ -2,6 +2,17 @@
 
 ## Status
 
+- **QML workbench prototype — started (2026-11-06, `qml` branch).** Direction
+  confirmed with the user: QML is the future UI, the Win32 workbench's full
+  feature set gets ported into it. `binarylab.exe` is a Qt-free stub loading
+  `BinaryLabApp.dll` (built on Win顺's Qt 6): the plugin protocol serves on a
+  worker thread, the QML window opens on the GUI thread, and the window reuses
+  Win顺's shared app QML controls (Theme, TitleBar, PageTabs, InputBox,
+  FlatButton, ...). Scope so far: the bits page (`BitsWindow.qml` +
+  `BitsModel`); the Win32 workbench keeps bytes / struct / settings / help
+  until the port lands. Checked without the host:
+  `binarylab.exe --bits --app-dir <Win顺> [expression]`.
+
 - **v1 (0.1.0) — implemented and verified.** Text-based, zero-permission,
   strict-sandbox C++ resident plugin. Three keywords (`bits`, `bytes`,
   `struct`), `preview.text` visualizations, three ordered actions, no window,
