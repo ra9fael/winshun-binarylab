@@ -8,6 +8,8 @@ future phases live in [ROADMAP.md](ROADMAP.md).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-07
+
 ### Added
 - An experimental QML workbench prototype on the `qml` branch: `binarylab.exe`
   becomes a Qt-free stub that loads `BinaryLabApp.dll`, built on Win顺's Qt 6,
@@ -212,5 +214,6 @@ never published; they are listed below for context.
   hex / bin / oct byte-stream decoding, and C-style struct layout with
   `#pragma pack`.
 
-[Unreleased]: https://github.com/ra9fael/winshun-binarylab/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ra9fael/winshun-binarylab/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ra9fael/winshun-binarylab/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ra9fael/winshun-binarylab/releases/tag/v0.3.0
