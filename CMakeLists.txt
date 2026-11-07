@@ -73,7 +73,7 @@ target_include_directories(BinaryLabApp SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/thir
 set(shared_qml
     Theme.qml Hook.qml UiScale.qml WindowEdge.qml HoverTip.qml DropMenu.qml Glyph.qml TitleBar.qml ToggleSwitch.qml FlatButton.qml
     InputBox.qml Caret.qml CenteredNumber.qml KeyCap.qml HotkeyRecorder.qml ListScrollBar.qml ListWheelScroll.qml
-    ScrollPixelAlignment.qml SettingsSection.qml SettingRow.qml PageTabs.qml ScopeTabs.qml)
+    ScrollPixelAlignment.qml SettingsSection.qml SettingRow.qml PageTabs.qml)
 set(binarylab_qml
     "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/Workbench.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/BitsPage.qml"

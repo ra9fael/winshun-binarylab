@@ -17,35 +17,64 @@ records field by field.
 
 ## Install
 
-1. Download `ra9fael.binarylab-<version>.wsplugin` from the
-   [latest release](https://github.com/ra9fael/winshun-binarylab/releases/latest).
-   Optionally compare its SHA-256 with the `.sha256` file next to it
-   (`Get-FileHash <file> -Algorithm SHA256`).
-2. In Win顺 open **Settings → Plugins → Installed → Add plugin →
-   Archive (.zip / .wsplugin)** and pick the file. In the Chinese UI the same
-   path reads **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**.
-3. A plugin installed from a local package is **not enabled automatically**.
-   Turn it on in the list; enabling it is how you confirm its permissions
-   (see [Permissions](#permissions-and-data)).
+**Install from Win顺's in-app plugin library (recommended):** open
+**Settings → Plugins → Plugin library** and search for "Binary Lab"
+(**设置 → 插件 → 插件库**，"二进制工作台" in the Chinese UI). This plugin is a
+native exe and ships through the library's **unreviewed native package**
+category: **Win顺 asks for confirmation on installation and on every update**,
+and never installs silently in the background.
 
-**Update:** install the newer `.wsplugin` the same way. Win顺 sees the same id,
-asks before replacing the old version, and keeps the plugin's data folder.
+You can also install manually: download
+`ra9fael.binarylab-<version>.wsplugin` from the
+[latest release](https://github.com/ra9fael/winshun-binarylab/releases/latest).
+Optionally compare its SHA-256 with the `.sha256` file next to it
+(`Get-FileHash <file> -Algorithm SHA256`). Then in Win顺 open
+**Settings → Plugins → Installed → Add plugin → Archive (.zip / .wsplugin)**
+and pick the file. In the Chinese UI the same path reads
+**设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**.
+A plugin installed from a local package is **not enabled automatically**.
+Turn it on in the list; enabling it is how you confirm its permissions
+(see [Permissions](#permissions-and-data)).
+
+**Update:** the library entry has `autoUpdate` on, so a new release is picked
+up automatically — but every update still asks for your confirmation. When
+installing manually, install the newer `.wsplugin` the same way. Win顺 sees
+the same id, asks before replacing the old version, and keeps the plugin's
+data folder.
 
 **Uninstall:** remove it from **Settings → Plugins → Installed**
 (**设置 → 插件 → 已安装** in the Chinese UI).
 
-This plugin is a native exe, so it is not listed in Win顺's in-app plugin
-library (the community index accepts script plugins only). The releases of this
-repository are the only distribution channel.
+This plugin is a native package (the `binarylab.exe` starter plus
+`BinaryLabApp.dll`). "Unreviewed" means nobody has read this version's source
+yet: installation and updates ask for your confirmation, and a SHA-256 only
+proves distribution integrity, not a code review. The source, the build
+instructions and the source tag behind every release are fully public — see
+the next section.
+
+The QML workbench reuses Win顺's own Qt through the **shared Qt contract**
+(`runtime.qt: "host"`, `qtVersion: "6.12"`), so the package carries no Qt
+runtime of its own. The contract guarantees Qt Core / Gui / Qml / Quick and
+the `QtQuick`, `QtQuick.Controls.Basic`, `QtQuick.Layouts` modules; the
+reused Win顺 controls also touch `QtQuick.Shapes` and `QtQuick.Effects`,
+which sit outside that guaranteed set — Win顺's own UI depends on both, so
+they ship with the host.
 
 ## Build from source
 
-Requirements: Windows 10/11 x64, CMake 3.21+, and either Visual Studio 2022 or
-later (MSVC) or MinGW-w64 GCC 13+. Python 3.10+ for packaging and the
-integration tests.
+Requirements: Windows 10/11 x64, CMake 3.21+ and Visual Studio 2022 or later
+(MSVC x64). The QML workbench on the `qml` branch links Win顺's Qt dynamically
+(the shared Qt contract supports MSVC only), so MinGW builds do not apply.
+Python 3.10+ for packaging and the integration tests.
+
+> The QML workbench prototype additionally needs a Qt 6 (6.12 recommended,
+> the MSVC 2022 64-bit kit) and a WinShun source checkout next to it (the
+> CMake variable `WINSHUN_DIR`, default `../WinShun`). The prototype previews
+> without the host: `binarylab.exe --bits --app-dir <Win顺 install folder>
+> [expression]`.
 
 ```powershell
-cmake -S . -B build -A x64                 # MSVC; for MinGW use -G "MinGW Makefiles"
+cmake -S . -B build -A x64                 # MSVC
 cmake --build build --config Release       # writes binarylab.exe next to plugin.json
 ctest --test-dir build -C Release --output-on-failure
 python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin

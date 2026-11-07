@@ -145,6 +145,21 @@ published. To redo a failed release, delete the tag locally and remotely, fix,
 and tag again. Never replace the assets of a published release; publish a new
 patch version instead.
 
+The `.wsplugin` release is not the whole distribution: the plugin is listed in
+Win顺's in-app plugin library. Clone
+[LingCore/WinShun-plugins](https://github.com/LingCore/WinShun-plugins) and
+generate the entry from the release asset:
+
+```powershell
+python tools/entry.py <release asset URL> --unreviewed-native
+```
+
+The `--unreviewed-native` flag is mandatory for a native (exe/dll) package; it
+sets the entry's `review` field to `unreviewed-native`, which must never be
+removed or replaced later. Submit `plugins/ra9fael.binarylab.json` (a PR for
+outside contributors; the maintainers of this repository push it directly),
+then check the published `index.json` picks it up.
+
 ## License
 
 By contributing you agree that your contribution is licensed under the MIT

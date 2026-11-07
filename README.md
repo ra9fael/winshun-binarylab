@@ -13,33 +13,46 @@
 
 ## 安装
 
-1. 从 [最新 Release](https://github.com/ra9fael/winshun-binarylab/releases/latest)
-   下载 `ra9fael.binarylab-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
-   SHA-256（`Get-FileHash <file> -Algorithm SHA256`）。
-2. 在 Win顺 里打开 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**，
-   选中该文件。
-3. 从本地安装包安装的插件**不会自动启用**。请在列表里打开开关；启用这一步就是你
-   在确认它申请的权限（见 [权限与数据](#权限与数据)）。
+**从 Win顺 插件库安装（推荐）：** 打开 **设置 → 插件 → 插件库**，搜索"二进制工作台"。
+本插件是原生 exe，属于插件库的**未审核原生插件**类别：**安装和每次更新时 Win顺 都会
+单独请求确认**，不会后台静默安装。
 
-**更新：** 用同样方式安装新版的 `.wsplugin`。Win顺 认出是同一个 id，会先询问是否
-替换旧版本，并保留插件的数据目录。
+也可以手动安装：从
+[最新 Release](https://github.com/ra9fael/winshun-binarylab/releases/latest)
+下载 `ra9fael.binarylab-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
+SHA-256（`Get-FileHash <file> -Algorithm SHA256`）。然后在 Win顺 里打开
+**设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**，选中该文件。
+从本地安装包安装的插件**不会自动启用**。请在列表里打开开关；启用这一步就是你
+在确认它申请的权限（见 [权限与数据](#权限与数据)）。
+
+**更新：** 插件库条目开了 `autoUpdate`，新版本发布后插件库会自动跟进收录，但每次
+更新仍需要你确认。手动安装的话，用同样方式安装新版的 `.wsplugin`。Win顺 认出是
+同一个 id，会先询问是否替换旧版本，并保留插件的数据目录。
 
 **卸载：** 在 **设置 → 插件 → 已安装** 里移除。
 
-本插件是原生 exe，不会出现在 Win顺 应用内的插件库里（社区索引只收脚本插件）。
-本仓库的 Release 是唯一的分发渠道。
+本插件是原生包（`binarylab.exe` 启动器 + `BinaryLabApp.dll`）。"未审核"是指这一版
+源码还没有人读过：安装与更新需要你确认，SHA-256 只证明分发完整性，不代表代码已
+审核。源码、构建方式和每个 Release 对应的源码标签完全公开，见下一节。
+
+QML 工作台按 Win顺 的**共享 Qt 契约**（`runtime.qt: "host"`，`qtVersion: "6.12"`）
+复用 Win顺 自带的 Qt，包内不带 Qt 运行时。契约只保证 Qt Core / Gui / Qml / Quick
+和 `QtQuick`、`QtQuick.Controls.Basic`、`QtQuick.Layouts`；工作台复用的 Win顺 共享
+控件还会用到 `QtQuick.Shapes` 和 `QtQuick.Effects`，超出契约的保证集——不过 Win顺
+自己的界面同样依赖这两个模块，它们随宿主一起部署。
 
 ## 从源码构建
 
-环境要求：Windows 10/11 x64、CMake 3.21+，以及 Visual Studio 2022 及以上（MSVC）
-或 MinGW-w64 GCC 13+。打包和集成测试需要 Python 3.10+。
+环境要求：Windows 10/11 x64、CMake 3.21+ 和 Visual Studio 2022 及以上（MSVC x64）。
+qml 分支的 QML 工作台动态链接 Win顺 的 Qt（共享 Qt 契约只支持 MSVC），MinGW 构建
+不适用；打包和集成测试需要 Python 3.10+。
 
-> `qml` 分支的 QML 工作台原型额外需要 Qt 6 和旁边的 WinShun 源码 checkout
-> （CMake 变量 `WINSHUN_DIR`，默认 `../WinShun`）。预览原型无需宿主：
+> QML 工作台原型额外需要 Qt 6（推荐 6.12，MSVC 2022 64 位套件）和旁边的 WinShun
+> 源码 checkout（CMake 变量 `WINSHUN_DIR`，默认 `../WinShun`）。预览原型无需宿主：
 > `binarylab.exe --bits --app-dir <Win顺安装目录> [表达式]`。
 
 ```powershell
-cmake -S . -B build -A x64                 # MSVC；MinGW 用 -G "MinGW Makefiles"
+cmake -S . -B build -A x64                 # MSVC
 cmake --build build --config Release       # 在 plugin.json 旁边生成 binarylab.exe
 ctest --test-dir build -C Release --output-on-failure
 python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin

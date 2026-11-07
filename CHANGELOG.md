@@ -13,13 +13,21 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   becomes a Qt-free stub that loads `BinaryLabApp.dll`, built on Win顺's Qt 6,
   which serves the plugin protocol on a worker thread and runs the QML window
   on the GUI thread (the same split as Win顺's own capture plugin). The
-  prototype covers the bits page only — expression line, width/signedness
-  toolbar, bit grid, base chips, parity row — reusing Win顺's shared QML
-  controls (Theme, TitleBar, InputBox, FlatButton); the Win32 workbench stays
-  the shipping UI until the port completes. `binarylab.exe --bits
-  [--app-dir <folder>] [expression]` opens the prototype without the host.
-  Building the branch needs a Qt 6, found through `WINSHUN_DIR` (a WinShun
-  checkout, default `../WinShun`).
+  prototype reuses Win顺's shared QML controls (Theme, TitleBar, InputBox,
+  FlatButton) and covers the bits page, the byte page (scalar grid and
+  records mode), the struct page and the workbench settings / help pages;
+  the Win32 workbench stays the shipping UI until the port completes.
+  `binarylab.exe --bits [--app-dir <folder>] [expression]` opens the prototype
+  without the host. Building the branch needs a Qt 6, found through
+  `WINSHUN_DIR` (a WinShun checkout, default `../WinShun`).
+- Distribution through Win顺's in-app plugin library as an **unreviewed
+  native package**: `minWinShun` is now `0.22.0` and the manifest declares
+  Win顺's shared Qt contract (`runtime.qt: "host"`, `qtVersion: "6.12"`),
+  so the host sets up the Qt DLL paths and QML import paths for the stub and
+  the package carries no Qt runtime of its own. Win顺 asks for confirmation
+  on installation and on every update. The reused Win顺 controls also touch
+  `QtQuick.Shapes` and `QtQuick.Effects`, which sit outside the contract's
+  guaranteed set — Win顺's own UI depends on both, so they ship with the host.
 - Full-precedence integer expressions in `bits` and in the workbench
   expression line: unary `~ + -`, right-associative `**`, `* / %`, `+ -`,
   `<< >> rol ror`, `& ^ |`, and parentheses (`u8 1 + 2 * 3` = 7,
