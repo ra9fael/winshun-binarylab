@@ -6,20 +6,20 @@ All notable changes to this plugin. The format follows
 single source of truth; release tags are `v<version>`. Design decisions and
 future phases live in [ROADMAP.md](ROADMAP.md).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-07
 
 ### Added
-- An experimental QML workbench prototype on the `qml` branch: `binarylab.exe`
-  becomes a Qt-free stub that loads `BinaryLabApp.dll`, built on Win顺's Qt 6,
-  which serves the plugin protocol on a worker thread and runs the QML window
-  on the GUI thread (the same split as Win顺's own capture plugin). The
-  prototype covers the bits page only — expression line, width/signedness
-  toolbar, bit grid, base chips, parity row — reusing Win顺's shared QML
-  controls (Theme, TitleBar, InputBox, FlatButton); the Win32 workbench stays
-  the shipping UI until the port completes. `binarylab.exe --bits
-  [--app-dir <folder>] [expression]` opens the prototype without the host.
-  Building the branch needs a Qt 6, found through `WINSHUN_DIR` (a WinShun
-  checkout, default `../WinShun`).
+- The QML workbench on the `qml` branch becomes the editor window:
+  `binarylab.exe` is a Qt-free stub that loads `BinaryLabApp.dll`, built on
+  Win顺's Qt 6, which serves the plugin protocol on a worker thread and runs
+  the QML window on the GUI thread (the same split as Win顺's own capture
+  plugin). The five-tab workbench — bits / bytes / struct / settings / help —
+  reuses Win顺's shared QML controls (Theme, TitleBar, PageTabs, InputBox,
+  FlatButton) and re-fits its window to the page's content. The blank
+  `bits` / `bytes` / `struct` entries open their tabs;
+  `binarylab.exe --bits [--app-dir <folder>] [expression]` opens the
+  workbench without the host. Building the branch needs a Qt 6, found
+  through `WINSHUN_DIR` (a WinShun checkout, default `../WinShun`).
 - Full-precedence integer expressions in `bits` and in the workbench
   expression line: unary `~ + -`, right-associative `**`, `* / %`, `+ -`,
   `<< >> rol ror`, `& ^ |`, and parentheses (`u8 1 + 2 * 3` = 7,
@@ -112,6 +112,24 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   "line height + 4 px" control left the bar 2 px high; the control is now
   exactly one measured text line tall, so caret and glyphs share one box and
   the band centring positions both.
+- The Mica backdrop and the bit cells repaint: a flipped bit sometimes left
+  stale cells until the next interaction (fb00bb5).
+- The base chips row (HEX / OCT / BIN / DEC) collapsed to zero height and
+  never came back: the copied note sat inside the chips Flow with a
+  verticalCenter anchor, and anchors are illegal inside a positioner — the
+  moment the note appeared the Flow's layout broke for good. The note is now
+  plain flow content, and the chips / parity Repeaters take `QVariantList`
+  properties (`readouts` / `parity`) from the model instead of rebuilding JS
+  array literals on every state change.
+- The workbench window kept a stale height when a page's content changed
+  (an error line appeared, the width buttons grew the grid): the height is
+  re-fitted whenever the loaded page's implicit height moves, not only on
+  page load and tab switches.
+- Opening the workbench a second time in the same process crashed
+  (0xC0000005): `guiOpen` created a new window without retiring the old one,
+  and re-fitting over the old window's live HWND killed the process. The
+  previous window is now closed and deleted synchronously before the next
+  window takes the frame over.
 
 ## [0.3.0] - 2026-11-05
 
