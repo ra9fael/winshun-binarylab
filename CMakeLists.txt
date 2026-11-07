@@ -77,6 +77,7 @@ set(shared_qml
 set(binarylab_qml
     "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/Workbench.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/BitsPage.qml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/FloatBar.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/BytesPage.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/StructPage.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/qmlapp/qml/SettingsPage.qml"

@@ -16,9 +16,8 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   which serves the plugin protocol on a worker thread and runs the QML window
   on the GUI thread (the same split as Win顺's own capture plugin). The
   prototype reuses Win顺's shared QML controls (Theme, TitleBar, InputBox,
-  FlatButton) and covers the bits page, the byte page (scalar grid and
-  records mode), the struct page and the workbench settings / help pages;
-  the Win32 workbench stays the shipping UI until the port completes.
+  FlatButton) and covers the bits page; the byte, struct, settings and help
+  pages are placeholders until their port slices land.
   `binarylab.exe --bits [--app-dir <folder>] [expression]` opens the prototype
   without the host. Building the branch needs a Qt 6, found through
   `WINSHUN_DIR` (a WinShun checkout, default `../WinShun`).

@@ -90,6 +90,7 @@ Window {
         id: bitsPage
         BitsPage {
             lab: window.lab.bits
+            workbench: window
         }
     }
     Component {
