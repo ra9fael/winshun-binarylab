@@ -45,26 +45,14 @@ and custom captions. ICO sizes: 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256; QML embe
 
 ## Install
 
-1. Download `ra9fael.binarylab-gdi-<version>.wsplugin` from the
-   [latest release](https://github.com/ra9fael/winshun-binarylab/releases).
-   Optionally compare its SHA-256 with the `.sha256` file next to it
-   (`Get-FileHash <file> -Algorithm SHA256`).
-2. In Win顺 open **Settings → Plugins → Installed → Add plugin →
-   Archive (.zip / .wsplugin)** and pick the file. In the Chinese UI the same
-   path reads **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**.
-3. A plugin installed from a local package is **not enabled automatically**.
-   Turn it on in the list; enabling it is how you confirm its permissions
-   (see [Permissions](#permissions-and-data)).
+1. Choose **GDI** from [Releases](https://github.com/ra9fael/winshun-binarylab/releases) and download `ra9fael.binarylab-gdi-<version>.wsplugin`. QML releases carry the Pre-release label.
+2. Optionally compare `Get-FileHash <file> -Algorithm SHA256` with the accompanying `.sha256` file.
+3. Import through **Settings → Plugins → Installed → Add plugin → Archive (.zip / .wsplugin)**. After a fresh install, enable the plugin and confirm its permissions.
 
-**Update:** install the newer `.wsplugin` the same way. Win顺 sees the same id,
-asks before replacing the old version, and keeps the plugin's data folder.
+**Update or change edition:** import the selected package and confirm replacement, including same-version reinstalls or downgrades. Settings and the separate data directory retain the same ID.
+**Uninstall:** remove the plugin from **Settings → Plugins → Installed**.
 
-**Uninstall:** remove it from **Settings → Plugins → Installed**
-(**设置 → 插件 → 已安装** in the Chinese UI).
-
-This plugin is a native exe, so it is not listed in Win顺's in-app plugin
-library (the community index accepts script plugins only). The releases of this
-repository are the only distribution channel.
+This release is distributed from its own GitHub repository. No two-edition gallery index or automatic update feed is configured. QML packages `binarylab.exe` and `BinaryLabApp.dll`, using host Qt 6.12 (minimum patch 6.12.0) without bundling Qt itself.
 
 ## Build from source
 
@@ -460,15 +448,7 @@ was ~81 ms p95.
 
 ## Distribution and versioning
 
-`runtime.program` is a native executable. The community repository's
-`plugin.schema.json` restricts `runtime.program` to interpreters and an
-official whitelist, and `CONTRIBUTING.md` excludes exe/DLL submissions, so
-this plugin is distributed from its **own repository as a `.wsplugin` package**
-that users import into WinShun (see [Install](#install)). Do not open a source
-PR against `WinShun-plugins`. `tools/package.py` builds the package from the
-git-tracked files plus the built `binarylab.exe`, so the `build/` tree, logs and
-anything untracked never ship. Bump `version` for every release; see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Release tags use `<variant>-vX.Y.Z`; `plugin.json` keeps a numeric version. The packager reads `release.json`, validates the edition, required runtime files and bilingual notes, then emits the `.wsplugin`, SHA256 and release notes. QML remains a preview. Changing editions is an explicit replacement install. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

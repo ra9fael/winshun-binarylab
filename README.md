@@ -40,21 +40,14 @@ ICO 含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256 像素；QML 使用同源 PNG 资
 
 ## 安装
 
-1. 从 [最新 Release](https://github.com/ra9fael/winshun-binarylab/releases)
-   下载 `ra9fael.binarylab-gdi-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
-   SHA-256（`Get-FileHash <file> -Algorithm SHA256`）。
-2. 在 Win顺 里打开 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**，
-   选中该文件。
-3. 从本地安装包安装的插件**不会自动启用**。请在列表里打开开关；启用这一步就是你
-   在确认它申请的权限（见 [权限与数据](#权限与数据)）。
+1. 从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 选择 **GDI**，下载 `ra9fael.binarylab-gdi-<version>.wsplugin`。QML 选带 Pre-release 标记的版本。
+2. 可用旁边的 `.sha256` 文件与 `Get-FileHash <file> -Algorithm SHA256` 核对完整性。
+3. 在 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）** 中导入。全新安装后打开插件开关并确认权限。
 
-**更新：** 用同样方式安装新版的 `.wsplugin`。Win顺 认出是同一个 id，会先询问是否
-替换旧版本，并保留插件的数据目录。
+**更新或切换界面版本：** 导入目标包并确认替换；同版本覆盖与降级也允许确认。保留同 ID 的配置和独立数据目录。
+**卸载：** 在 **设置 → 插件 → 已安装** 中移除。
 
-**卸载：** 在 **设置 → 插件 → 已安装** 里移除。
-
-本插件是原生 exe，不会出现在 Win顺 应用内的插件库里（社区索引只收脚本插件）。
-本仓库的 Release 是唯一的分发渠道。
+本次通过独立 GitHub Release 分发，尚未提交双版本插件库索引或配置自动更新源。QML 包含 `binarylab.exe` 与 `BinaryLabApp.dll`，使用宿主 Qt 6.12（最低补丁 6.12.0），不捆绑 Qt 运行时。
 
 ## 从源码构建
 
@@ -358,13 +351,7 @@ stdout 只承载 JSON-RPC 行。`timeoutMs` 为 1500；在 4096 字节上限下�
 
 ## 分发与版本
 
-`runtime.program` 是原生可执行文件。社区仓库的 `plugin.schema.json` 把
-`runtime.program` 限制为解释器和官方白名单，`CONTRIBUTING.md` 也排除 exe / DLL
-提交，因此本插件由**自己的仓库以 `.wsplugin` 包分发**，用户导入 Win顺
-（见 [安装](#安装)）。不要向 `WinShun-plugins` 提源码 PR。
-`tools/package.py` 从 git 跟踪的文件加上构建好的 `binarylab.exe` 打包，
-所以 `build/`、日志和任何未跟踪内容都不会进入发布包。每次发布都要递增
-`version`；见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+发布使用 `<variant>-vX.Y.Z` 标签；`plugin.json` 保持纯数字版本。打包脚本读取 `release.json`，校验类型、必需运行文件和双语版本说明，然后生成 `.wsplugin`、SHA256 与发布说明。QML 作为预览版发布；切换类型始终是用户明确选择的替换安装。流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 
