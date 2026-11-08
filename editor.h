@@ -30,6 +30,7 @@
 #include "winshun.h"
 
 #include <windows.h>
+#include "window_icons.h"
 
 #include <algorithm>
 #include <condition_variable>
@@ -97,6 +98,7 @@ struct HistoryEntry {
 };
 
 struct EditorState {
+    WindowIcons windowIcons;
     std::mutex m;
     std::condition_variable cv;
     std::thread worker;
@@ -1492,7 +1494,9 @@ void setKind(HWND hwnd, int kind)
 // removes "& " and then "0xA5". Kills land in the kill buffer (Ctrl+Y yanks)
 // and go through EM_REPLACESEL, which keeps them on the native undo stack.
 
-constexpr bool isExprWordChar(wchar_t c)
+// Not constexpr: std::iswalnum is not a constant expression in the standard,
+// and MSVC rejects the declaration outright (C3615) even though GCC accepts it.
+bool isExprWordChar(wchar_t c)
 {
     return std::iswalnum(static_cast<wint_t>(c)) || c == L'_' || c == L'.';
 }
@@ -3480,6 +3484,9 @@ void handleSettingsContentClick(HWND hwnd, int x, int y)
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
+    case WM_DPICHANGED:
+        state().windowIcons.update(hwnd, HIWORD(wp));
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_PAINT:
         paint(hwnd);
         return 0;
@@ -3894,6 +3901,8 @@ void threadMain(EditorSpec spec)
         s.cv.notify_all();
     }
 
+    s.windowIcons.update(hwnd);
+
     // Expression input: a real EDIT control so typing, caret and selection all
     // come for free. EN_CHANGE drives live evaluation.
     s.editFont = monoFont(13, false);
@@ -3941,6 +3950,7 @@ void threadMain(EditorSpec spec)
         }
     }
 
+    s.windowIcons.clear();
     if (s.editFont) {
         DeleteObject(s.editFont);
         s.editFont = nullptr;

@@ -1,5 +1,7 @@
 # Changelog
 
+[English](CHANGELOG.en.md)
+
 All notable changes to this plugin. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). The version in `plugin.json` is the
@@ -101,6 +103,17 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   "line height + 4 px" control left the bar 2 px high; the control is now
   exactly one measured text line tall, so caret and glyphs share one box and
   the band centring positions both.
+
+## [0.3.1] - 2026-11-09
+
+### Fixed
+
+- 修复可执行文件图标，补齐打包中的 ICO 和资源脚本。 为窗口显式设置大小图标，随 DPI 更新并释放图标句柄。 包含工作区中现有的 MSVC iswalnum 编译兼容修复。
+
+### Notes
+
+- 本次仅生成本地标签与安装包。实际验证范围见 docs/icon-validation.md；未进行 GitHub 发布。更新后需重新启动插件进程。
+
 
 ## [0.3.0] - 2026-11-05
 
