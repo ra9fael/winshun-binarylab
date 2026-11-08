@@ -127,4 +127,3 @@ These pre-split notes also describe the inherited GDI workbench. They are histor
   "line height + 4 px" control left the bar 2 px high; the control is now
   exactly one measured text line tall, so caret and glyphs share one box and
   the band centring positions both.
-
