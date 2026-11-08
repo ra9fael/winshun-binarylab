@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-09
+
+### Fixed
+
+- Require WinShun 0.22.0 for installation consent for unreviewed native plugins.
+- Keep the GDI edition independent of Qt, with new-tag and manual release entry points and the existing logic and packaging tests.
+
 ## [0.3.2] - 2026-11-09
 
 ### Changed

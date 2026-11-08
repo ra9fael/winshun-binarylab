@@ -19,7 +19,7 @@ records field by field.
 
 ## GDI / QML editions
 
-This branch is **GDI 0.3.2**.
+This branch is **GDI 0.3.3**.
 
 | Item | GDI | QML |
 |---|---|---|
