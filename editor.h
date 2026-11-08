@@ -3341,7 +3341,7 @@ void paint(HWND hwnd)
         right1 = (s.zh ? "焦点 位 " : "focus bit ") + std::to_string(s.focusBit)
                + " = " + std::to_string(getBit(s.value, s.focusBit));
     else
-        right1 = "v0.3.0";
+        right1 = "v0.3.1";
     RECT sr1 { w - 12 - rightW, statusTop, w - 12, statusTop + kStatusRowH };
     drawCenteredText(mem, sr1, wideFromUtf8(right1), freshMsg ? kOkText : kLabelText);
 
