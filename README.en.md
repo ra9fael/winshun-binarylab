@@ -257,7 +257,7 @@ strict sandbox as the rest of the plugin. Inside it:
 | Ctrl+C / B / D / O | Copy the value as HEX / BIN / DEC / OCT to the clipboard |
 | Enter (in the expression box) | Re-evaluate and submit the expression to history |
 | Up / Down | Browse submitted history; Down past the newest restores the draft |
-| `▾` at the right of the expression row | Open the last 12 entries; click one to recall and evaluate |
+| `▾` at the right of the expression row | Open the last 12 entries; click one to recall and evaluate, ✕ deletes one |
 | Esc | Close (closes the dropdown first if it is open) |
 
 The result chips show the four bases live as you edit. The window lives on its
@@ -300,15 +300,17 @@ show the encoded bits, the FLOAT chip (replacing DEC in float mode) shows the
 shortest round-tripping decimal text, and a purple / blue / green band marks
 S / E / M at the top of each bit cell.
 
-**Float bar**: the "float bar" pill at the right end of the top bar opens a
-row under the grid with proportional S | E | M blocks. Each block shows its
-bit count and raw field value and copies that field on click (e.g. `0x7F`).
-Pointing at a block puts its bit range, unbiased exponent and so on in the
-caption line and highlights its bits in the grid; pointing at a bit lights its
-block. An integer result at width 16 / 32 / 64 shows a dimmed "ghost-read as
-f16/f32/f64" bar; 8 bits has no container and shows a grey band with a hint.
-The window grows by 34 px only when the pill is switched, never because of the
-result type. The `floatBar` setting picks the initial state.
+**Float bar**: in a float reading a row of proportional S | E | M blocks stays
+open under the grid. Each block shows its bit count and raw field value and
+copies that field on click (e.g. `0x7F`); set bits wear their field's colour
+and the hovered field's bits lighten. Pointing at a block puts its bit range,
+unbiased exponent and so on in the caption line and highlights its bits in the
+grid; pointing at a bit lights its block. An integer result shows no bar by
+default; with the `floatBar` setting on, an integer result at width 16 / 32 /
+64 also gets a dimmed "ghost-read as f16/f32/f64" preview bar, and 8 bits has
+no container and shows a grey band with a hint. The window height changes only
+when a result switches between integer and float; the bar itself has no
+toggle.
 
 **Float on the toolbar**: the "Type" row next to the widths reads
 `unsigned u | signed i | float f`. In float mode the width buttons read
@@ -336,7 +338,8 @@ Only expressions submitted with Enter and successfully evaluated are recorded;
 live evaluation does not flood the list. History is appended as JSONL to the
 host's `dataDir/history.jsonl`, capped at 200 entries with adjacent duplicates
 removed. If the strict sandbox denies disk writes, it degrades to session-only
-and the Settings tab says so. "Clear history" empties both memory and file.
+and the Settings tab says so. The ✕ at a row's end deletes that entry (the
+file is rewritten); "Clear history" empties both memory and file.
 There is deliberately **no sixth tab**: history is an input assistant and the
 dropdown stays usable while the bit grid is visible.
 
@@ -393,7 +396,7 @@ lives on the bits page only. Esc closes the window
 | `bitsEnter` | choice | `copy` | Which of copy / editor takes Enter on `bits` rows. `copy` (default) = Enter copies, Ctrl+Enter opens the editor; `editor` swaps them. |
 | `evalMode` | choice | `fixed` | Expression evaluation mode. `fixed` (default) keeps every step inside the width and reports wrapping; `c` applies C integer promotions and derives the result type. An explicit type prefix always evaluates fixed. |
 | `formatDir` | folder | (empty) | `bytes fmt` reads `*.toml` from this folder (hextract format, read-only, up to 64 files of 64 KiB each); leave empty to use the two built-in BLM formats. Rescanned on `settingsChanged`. |
-| `floatBar` | choice | `off` | Whether the workbench opens with the float bar shown; the in-window pill toggles it for that window only. |
+| `floatBar` | choice | `off` | Whether integer mode also shows the hypothetical float-reading preview bar; in a float reading the bar and field colours always show regardless of this setting. |
 
 Settings are read from `initialize` and refreshed on `settingsChanged`; no
 secrets are involved.

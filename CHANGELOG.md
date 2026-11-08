@@ -42,18 +42,20 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   explicit type prefix always evaluates at that fixed width.
 - Bash-style editing keys in the expression line: Ctrl+A / E (home / end),
   Ctrl+U / K (kill to start / end), Ctrl+W and Ctrl+Backspace (word kill),
-  Ctrl+Y (yank), Ctrl+L (clear), Esc (clear, then close).
+  Ctrl+Y (yank), Ctrl+L (clear), Esc (clear, then close). The history
+  dropdown deletes single entries (✕ per row) as well as clearing all.
 - Syntax errors name the offending token (`... near '('`).
 - The workbench focuses the expression box when the window opens.
 - IEEE-754 binary16: `f16 1.5` = `0x3E00`, round-half-to-even, and `f16` words
   in `bytes`. Float containers come from one table (`FloatSpec`), so the
   encoder, FLOAT text, S/E/M breakdown and special-value labels share it.
   Values that leave their container say so (`+Inf` / `0` notes).
-- Float composition bar in the workbench: a top-bar pill opens a fixed 34 px
-  row of proportional S | E | M blocks under the grid, each copying its field;
-  bar and grid share one hover highlight; integer results at 16 / 32 / 64 bits
-  get a dimmed ghost reading, 8 bits a grey band. New `floatBar` setting
-  (`off` / `on`) picks the initial state.
+- Float composition bar in the workbench: in a float reading a row of
+  proportional S | E | M blocks stays open under the grid, each copying its
+  field; set bits wear their field's colour and the hovered field's bits
+  lighten; bar and grid share one hover highlight. Integer results show no bar
+  by default; the new `floatBar` setting (`off` / `on`) opts integer mode into
+  a dimmed ghost reading at 16 / 32 / 64 bits, 8 bits a grey band.
 
 - Float on the workbench toolbar: the sign row becomes a type row
   `unsigned u | signed i | float f`; in float mode the width buttons read
@@ -115,6 +117,14 @@ future phases live in [ROADMAP.md](ROADMAP.md).
   use Win顺's real English UI labels. No runtime change.
 
 ### Fixed
+- The workbench could die with an access violation or a fail-fast while it
+  was being used. The manifest asked the strict sandbox for a 128 MB commit
+  budget, but the Qt Quick workbench itself sits at ~145 MB before the user
+  types anything, so the renderer ran out of memory on the first resize and
+  the window went blank or took the process down with it. The budget is now
+  512 MB (the host's default), the window no longer refits on every content
+  change but after a short pause, and the bit grid reads one segment at a
+  time instead of materialising a whole float breakdown per mouse move.
 - The caret in the workbench expression line sat above the characters. A
   single-line EDIT centres its glyphs in a client area taller than the text
   line but pins the caret to the top of the line box, so the previous

@@ -103,6 +103,10 @@ foreach(file IN LISTS theme_images)
     set_source_files_properties("${file}" PROPERTIES QT_RESOURCE_ALIAS "${alias}")
 endforeach()
 
+# The workbench's title-bar icon, embedded with the QML it frames
+# (EditorQml.cpp: ws::WindowFrame::setIcon("qrc:/qt/qml/WinShun/labicon.png")).
+set_source_files_properties(qmlapp/assets/labicon.png PROPERTIES QT_RESOURCE_ALIAS "labicon.png")
+
 set(qml_import_scan "")
 if(QT6_IS_SHARED_LIBS_BUILD)
     set(qml_import_scan NO_IMPORT_SCAN) # as WinShun's (src/app/CMakeLists.txt)
@@ -115,7 +119,7 @@ qt_add_qml_module(BinaryLabApp
     ${qml_import_scan}
     NO_GENERATE_EXTRA_QMLDIRS
     QML_FILES ${binarylab_qml}
-    RESOURCES ${theme_images}
+    RESOURCES ${theme_images} qmlapp/assets/labicon.png
     SOURCES "${app_dir}/HotkeyRule.h"
 )
 # Bytecode only, no QML compiled to C++: the plugin runs on whichever Qt 6 its

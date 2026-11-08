@@ -292,9 +292,7 @@ void BitsModel::toggleBit(int index)
     if (index < 0 || index >= m_width)
         return;
     m_value ^= std::uint64_t(1) << index;
-    m_isFloat = false;
-    m_floatText.clear();
-    m_unitNote.clear();
+    refreshFloatReadout();
     m_histPos = -1;
     refresh();
     emit stateChanged();
@@ -309,12 +307,21 @@ void BitsModel::dragPaint(int index, int value)
     if ((m_value & mask) == wanted)
         return;
     m_value = value ? (m_value | mask) : (m_value & ~mask);
-    m_isFloat = false;
-    m_floatText.clear();
-    m_unitNote.clear();
+    refreshFloatReadout();
     m_histPos = -1;
     refresh();
     emit stateChanged();
+}
+
+void BitsModel::refreshFloatReadout()
+{
+    if (!m_isFloat)
+        return;
+    const FloatSpec* f = container();
+    if (!f)
+        return;
+    m_floatText = utf8(exactFloatText(m_value & maskFor(m_width), *f));
+    m_unitNote.clear();
 }
 
 QString BitsModel::noContainerMessage(int width) const
@@ -461,6 +468,19 @@ QString BitsModel::allText() const
     return out;
 }
 
+QVariantMap BitsModel::fieldFor(int segment) const
+{
+    const FloatSpec* f = container();
+    if (!f)
+        return {};
+    const FloatFields g = ::binlab::floatFields(m_value, *f);
+    const std::uint64_t v = segment == 2 ? g.sign : segment == 1 ? g.exp : g.mant;
+    return QVariantMap { { "seg", segment },
+        { "key", segment == 2 ? "S" : segment == 1 ? "E" : "M" },
+        { "hex", utf8(fieldHex(v)) },
+        { "bits", segment == 2 ? 1 : segment == 1 ? f->expBits : f->mantBits } };
+}
+
 QVariantMap BitsModel::floatInfo() const
 {
     const FloatSpec* f = container();
@@ -470,25 +490,50 @@ QVariantMap BitsModel::floatInfo() const
         { "bits", f->bits }, { "expBits", f->expBits }, { "mantBits", f->mantBits } };
 }
 
+QVariantList BitsModel::floatFields() const
+{
+    // The pill row's three entries, S|E|M order like the Win32 bar.
+    QVariantList list;
+    if (!container() || !m_error.isEmpty())
+        return list;
+    for (const int seg : { 2, 1, 0 })
+        list.push_back(fieldFor(seg));
+    return list;
+}
+
+QVariantList BitsModel::floatSegments() const
+{
+    QVariantList list;
+    list.reserve(std::max(0, m_width));
+    const FloatSpec* f = container();
+    for (int i = 0; i < m_width; ++i)
+        list.push_back(f ? floatSegment(i, *f) : -1);
+    return list;
+}
+
+void BitsModel::setHoverSeg(int seg)
+{
+    if (seg == m_hoverSeg)
+        return;
+    m_hoverSeg = seg;
+    emit stateChanged();
+}
+
+int BitsModel::floatSegmentAt(int bit) const
+{
+    const FloatSpec* f = container();
+    if (!f || bit < 0 || bit >= m_width)
+        return -1;
+    return floatSegment(bit, *f);
+}
+
 bool BitsModel::floatGhost() const
 {
     const FloatSpec* f = container();
     return f != nullptr && !m_isFloat;
 }
 
-QVariantMap BitsModel::floatField(int segment) const
-{
-    const FloatSpec* f = container();
-    if (!f)
-        return {};
-    const FloatFields g = floatFields(m_value, *f);
-    const std::uint64_t v = segment == 2 ? g.sign : segment == 1 ? g.exp : g.mant;
-    return QVariantMap { { "key", segment == 2 ? "S" : segment == 1 ? "E" : "M" },
-        { "hex", utf8(fieldHex(v)) },
-        { "bits", segment == 2 ? 1 : segment == 1 ? f->expBits : f->mantBits } };
-}
-
-QString BitsModel::floatCaption(int hoverSeg) const
+QString BitsModel::captionFor(int hoverSeg) const
 {
     if (!m_error.isEmpty())
         return m_zh ? "求值失败 · 位模式是最近一次有效结果"
@@ -503,7 +548,7 @@ QString BitsModel::floatCaption(int hoverSeg) const
     const bool ghost = !m_isFloat;
     const std::string layout = "1+" + std::to_string(f->expBits) + "+" + std::to_string(f->mantBits);
     if (hoverSeg >= 0) {
-        const FloatFields g = floatFields(m_value, *f);
+        const FloatFields g = ::binlab::floatFields(m_value, *f);
         const int lo = hoverSeg == 2 ? f->bits - 1 : f->mantBits;
         const int hi = hoverSeg == 0 ? f->mantBits - 1 : f->bits - 2;
         const char* name = hoverSeg == 2 ? "S" : hoverSeg == 1 ? "E" : "M";
@@ -550,16 +595,8 @@ void BitsModel::copyFloatField(int segment)
 {
     if (!container() || !m_error.isEmpty())
         return;
-    const QVariantMap field = floatField(segment);
+    const QVariantMap field = fieldFor(segment);
     copyValue(field.value("hex").toString(), field.value("key").toString());
-}
-
-int BitsModel::floatSegmentAt(int bit) const
-{
-    const FloatSpec* f = container();
-    if (!f || bit < 0 || bit >= m_width)
-        return -1;
-    return floatSegment(bit, *f);
 }
 
 // ---- expression history ------------------------------------------------------
@@ -668,16 +705,44 @@ void BitsModel::pickHistory(int displayIndex)
     emit stateChanged();
 }
 
+void BitsModel::rewriteHistoryFile()
+{
+    if (!m_historyPersistent)
+        return;
+    QFile file(m_historyPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        // An unwritable dataDir (strict sandbox) degrades to session-only.
+        m_historyPersistent = false;
+        winshun::debug("ra9fael.binarylab: history is session-only (dataDir is not writable)");
+        return;
+    }
+    for (const HistoryEntry& e : m_history) {
+        const std::string line = "{\"expr\":\"" + jsonEscape(e.expr.toStdString())
+            + "\",\"result\":\"" + jsonEscape(e.result.toStdString())
+            + "\",\"type\":\"" + jsonEscape(e.type.toStdString()) + "\"}\n";
+        file.write(line.data(), static_cast<qint64>(line.size()));
+    }
+}
+
+void BitsModel::removeHistory(int displayIndex)
+{
+    if (displayIndex < 0 || displayIndex >= m_history.size())
+        return;
+    const int vecIndex = static_cast<int>(m_history.size()) - 1 - displayIndex;
+    m_history.erase(m_history.begin() + vecIndex);
+    m_histPos = -1; // the browsed row may be gone; leave browse mode
+    rewriteHistoryFile();
+    winshun::debug("ra9fael.binarylab: history remove entry " + std::to_string(displayIndex));
+    emit historyChanged();
+    emit stateChanged();
+}
+
 void BitsModel::clearHistory()
 {
     m_history.clear();
     m_histPos = -1;
     m_historyOpen = false;
-    if (m_historyPersistent) {
-        QFile file(m_historyPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-            m_historyPersistent = false;
-    }
+    rewriteHistoryFile();
     winshun::debug("ra9fael.binarylab: history cleared");
     emit historyChanged();
     emit stateChanged();

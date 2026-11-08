@@ -72,8 +72,8 @@
     {
       "key": "floatBar",
       "type": "choice",
-      "title": {"zh": "浮点条带", "en": "Float composition bar"},
-      "hint": {"zh": "工作台打开时是否展开 S/E/M 比例条；窗口内顶栏右端的开关可随时切换", "en": "Whether the workbench opens with the S/E/M bar shown; the top-bar pill toggles it at any time"},
+      "title": {"zh": "整数模式的浮点预览", "en": "Float preview in integer mode"},
+      "hint": {"zh": "浮点模式下 S/E/M 条带与字段色恒定显示；此设置只控制整数模式下是否显示\"假设按浮点解释\"的预览条带", "en": "In float mode the S/E/M bar and field colours always show; this only controls whether integer mode also shows the hypothetical float-reading bar"},
       "default": "off",
       "options": ["off", "on"]
     }

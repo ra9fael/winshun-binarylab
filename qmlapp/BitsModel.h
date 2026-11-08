@@ -62,11 +62,23 @@ class BitsModel : public QObject {
     Q_PROPERTY(QVariantList historyEntries READ historyEntries NOTIFY historyChanged)
     Q_PROPERTY(int historyPos READ historyPos NOTIFY stateChanged)
     Q_PROPERTY(bool historyOpen READ historyOpen WRITE setHistoryOpen NOTIFY stateChanged)
-    // The composition bar: on/off is the host setting's session value; the
-    // ghost flag marks the hypothetical integer read of the same bits.
+    // The composition bar: a float reading always shows it; this host setting
+    // only decides whether integer mode also shows the hypothetical
+    // float-reading preview (the ghost bar).
     Q_PROPERTY(bool floatBarOn READ floatBarOn WRITE setFloatBarOn NOTIFY stateChanged)
     Q_PROPERTY(bool floatHasContainer READ floatHasContainer NOTIFY stateChanged)
     Q_PROPERTY(bool floatGhost READ floatGhost NOTIFY stateChanged)
+    // The bar's data as properties, not invokables: a QML binding over an
+    // invokable records no dependency and would freeze at the first value
+    // (the frozen f32-proportioned pills the first install showed).
+    Q_PROPERTY(QVariantMap floatInfo READ floatInfo NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList floatFields READ floatFields NOTIFY stateChanged) // S, E, M pill entries
+    Q_PROPERTY(QVariantList floatSegments READ floatSegments NOTIFY stateChanged) // per-bit field, LSB order
+    Q_PROPERTY(QString floatCaption READ floatCaption NOTIFY stateChanged)
+    // Which field the pointer is over, shared by the bar's pills and the
+    // grid's cells (the Win32 bar's shared hover): the hovered field tints,
+    // the others dim, the caption swaps in the field's reading.
+    Q_PROPERTY(int hoverSeg READ hoverSeg WRITE setHoverSeg NOTIFY stateChanged)
     Q_PROPERTY(QString message READ message NOTIFY messageChanged)
     Q_PROPERTY(bool zh READ zh CONSTANT)
 
@@ -109,6 +121,12 @@ public:
     void setFloatBarOn(bool on);
     bool floatHasContainer() const { return floatByBits(m_width) != nullptr; }
     bool floatGhost() const;
+    QVariantMap floatInfo() const;
+    QVariantList floatFields() const;
+    QVariantList floatSegments() const;
+    QString floatCaption() const { return captionFor(m_hoverSeg); }
+    int hoverSeg() const { return m_hoverSeg; }
+    void setHoverSeg(int seg);
     QString message() const { return m_message; }
     bool zh() const { return m_zh; }
 
@@ -125,19 +143,17 @@ public:
     Q_INVOKABLE void copyValue(const QString& text, const QString& name);
     Q_INVOKABLE void clearMessage();
     Q_INVOKABLE QString allText() const;         // the 全部 chip's multi-line copy
-    // The composition bar's data: the container layout, one field's numbers,
-    // the caption line, and which field a grid cell's bit belongs to.
-    Q_INVOKABLE QVariantMap floatInfo() const;   // {name, ieee, bits, expBits, mantBits}
-    Q_INVOKABLE QVariantMap floatField(int segment) const; // 0=M, 1=E, 2=S
-    Q_INVOKABLE QString floatCaption(int hoverSeg) const;
     Q_INVOKABLE void copyFloatField(int segment);
-    Q_INVOKABLE int floatSegmentAt(int bit) const; // -1 when no container
+    Q_INVOKABLE int floatSegmentAt(int bit) const; // -1 when no container; the
+        // scalar form for per-mouse-move paths (the floatSegments list binding
+        // allocates a fresh 64-slot list on every read and starves the JS GC)
     // History: Enter commits the line (intentional expressions only, not
     // every keystroke), Alt+Up/Down browses with a draft restore, the
     // dropdown picks and clear empties the file.
     Q_INVOKABLE void commitHistory();
     Q_INVOKABLE void historyStep(bool up);
     Q_INVOKABLE void pickHistory(int displayIndex);
+    Q_INVOKABLE void removeHistory(int displayIndex); // deletes one entry
     Q_INVOKABLE void clearHistory();
 
 signals:
@@ -158,6 +174,10 @@ private:
 
     void evaluate();
     void refresh();   // recompute the readouts from m_value
+    // The Win32 workbench's bit-edit rule: flipping bits under a float
+    // reading keeps the float view and recomputes its text from the same
+    // pattern, instead of silently dropping back to unsigned.
+    void refreshFloatReadout();
     void say(const QString& text);
     // Set the line from inside the model (the setType/setKind paths); the
     // Win32 workbench's replaceExpression().
@@ -165,8 +185,11 @@ private:
     // The rewritten line, or a null QString when the line has no leading type
     // prefix to rewrite.
     QString rewriteTypePrefix(int width, bool signed_) const;
+    QVariantMap fieldFor(int segment) const;   // 0=M, 1=E, 2=S
+    QString captionFor(int hoverSeg) const;
     void loadHistory();
     void appendHistoryFile(const HistoryEntry& e);
+    void rewriteHistoryFile();
     QString noContainerMessage(int width) const;
     const FloatSpec* container() const { return floatByBits(m_width); }
 
@@ -186,6 +209,7 @@ private:
     int m_ones = 0;
     QString m_message;
     bool m_floatBarOn = false;
+    int m_hoverSeg = -1;
 
     QVector<HistoryEntry> m_history;  // oldest first; back = newest
     int m_histPos = -1;               // display order: 0 = newest, -1 = not browsing

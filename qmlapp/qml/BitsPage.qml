@@ -20,7 +20,6 @@ Item {
     // cell (arrows move it, Space flips it, a click claims it).
     property int hoverParity: -1
     property int focusBit: -1
-    readonly property int hoverSeg: floatBar.hoverSeg
 
     // The Win32 workbench's floatSegColorByField(); FloatBar's pills use the
     // same three colours.
@@ -56,7 +55,7 @@ Item {
             return lab.unitNoteCompact
         if (page.focusBit >= 0)
             return (lab.zh ? "焦点 位 " : "focus bit ") + page.focusBit
-                + " = " + lab.bitAt(page.focusBit)
+                + " = " + lab.bitValues[page.focusBit]
         return ""
     }
 
@@ -64,10 +63,10 @@ Item {
         const lab = page.lab
         if (page.hoverParity >= 0 && page.hoverParity < lab.parity.length)
             return lab.parity[page.hoverParity].definition
-        if (page.hoverSeg >= 0)
-            return lab.floatCaption(page.hoverSeg)
+        if (lab.hoverSeg >= 0)
+            return lab.floatCaption
         if (lab.isFloat) {
-            const info = lab.floatInfo()
+            const info = lab.floatInfo
             return info.bits > 0 ? info.name + " · IEEE-754 " + info.ieee + " · " + lab.floatText
                                  : lab.width + " bit float · " + lab.floatText
         }
@@ -130,7 +129,10 @@ Item {
         Rectangle {
             visible: page.lab.historyOpen
             width: parent.width
-            height: body.height + 16
+            // Content-driven height: a fixed `body.height + 16` here plus an
+            // anchors.fill body below collapsed the card to its border (the
+            // binding loop) while the buttons still drew on the toolbar row.
+            height: body.implicitHeight + 16
             radius: Theme.cardRadius
             color: Theme.card
             border.width: Theme.hair(page.dpr)
@@ -138,7 +140,9 @@ Item {
 
             Column {
                 id: body
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
                 anchors.margins: 8
                 spacing: 6
 
@@ -175,18 +179,38 @@ Item {
                         }
                         Text {
                             id: readout
-                            anchors.right: parent.right
-                            anchors.rightMargin: 8
+                            anchors.right: delBtn.left
+                            anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
                             text: modelData.result + " · " + modelData.type
                             color: Theme.subtext
                             font.pixelSize: Theme.fontCaption
                             elide: Text.ElideLeft
                         }
+                        Text {
+                            id: delBtn
+                            anchors.right: parent.right
+                            anchors.rightMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "✕"
+                            color: delArea.containsMouse ? Theme.danger : Theme.faint
+                            font.pixelSize: Theme.fontCaption
+                        }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: page.lab.pickHistory(index)
+                        }
+                        MouseArea {
+                            id: delArea
+                            anchors.verticalCenter: delBtn.verticalCenter
+                            anchors.right: parent.right
+                            anchors.rightMargin: 4
+                            width: 24
+                            height: 24
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: page.lab.removeHistory(index)
                         }
                     }
                 }
@@ -203,6 +227,7 @@ Item {
                     FlatButton {
                         id: clearBtn
                         anchors.right: parent.right
+                        enabled: page.lab.historyEntries.length > 0
                         text: page.lab.zh ? "清空历史" : "Clear history"
                         onClicked: page.lab.clearHistory()
                     }
@@ -249,11 +274,6 @@ Item {
                 }
             }
             Item { width: 12; height: 1 }
-            FlatButton {
-                text: "S|E|M"
-                highlighted: page.lab.floatBarOn
-                onClicked: page.lab.floatBarOn = !page.lab.floatBarOn
-            }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: page.lab.typeName
@@ -267,7 +287,7 @@ Item {
         Rectangle {
             id: gridCard
             width: parent.width
-            height: grid.rows * grid.cellHeight
+            height: grid.rows * grid.cellHeight + (page.rows - 1) * grid.rowSpacing + 16
             radius: Theme.cardRadius
             color: Theme.card
             border.width: Theme.hair(page.dpr)
@@ -316,16 +336,23 @@ Item {
             Grid {
                 id: grid
                 anchors.fill: parent
+                anchors.margins: 8
                 columns: 8
                 rows: page.rows
+                // Spaced cells: each bit reads as its own key instead of one
+                // packed table, and the field bands / focus ring get room.
+                columnSpacing: 4
+                rowSpacing: 4
 
-                readonly property real cellWidth: width / columns
+                readonly property real cellWidth: (width - (columns - 1) * columnSpacing) / columns
                 readonly property real cellHeight: 50
                 property int paintValue: 0 // what a drag paints: the flip of the first cell
 
                 function cellAt(x, y) {
-                    const col = Math.min(columns - 1, Math.max(0, Math.floor(x / cellWidth)))
-                    const row = Math.min(rows - 1, Math.max(0, Math.floor(y / cellHeight)))
+                    const pitchX = grid.cellWidth + grid.columnSpacing
+                    const pitchY = grid.cellHeight + grid.rowSpacing
+                    const col = Math.min(columns - 1, Math.max(0, Math.floor(x / pitchX)))
+                    const row = Math.min(rows - 1, Math.max(0, Math.floor(y / pitchY)))
                     return row * columns + col
                 }
 
@@ -342,50 +369,97 @@ Item {
                         // invokable never re-evaluates when the value changes.
                         readonly property bool on: page.lab.bitValues[bit] === 1
                         // Which field the bit belongs to (the composition bar's
-                        // colours), only drawn while the bar is on.
-                        readonly property int seg: page.lab.floatSegmentAt(bit)
+                        // colours). Bands follow the Win32 workbench's
+                        // floatView() rule: a ghost reading only shows them
+                        // while the bar toggle is on, a genuine float always.
+                        readonly property int seg: page.lab.floatSegments[bit] ?? -1
+                        readonly property bool bandOn:
+                            seg >= 0 && (!page.lab.floatGhost || page.lab.floatBarOn)
+                        readonly property bool hoveredField:
+                            bandOn && page.lab.hoverSeg === seg
+                        // The field's own colour, and whether a set bit wears it
+                        // (a genuine float reading: the grid then shows the
+                        // S|E|M composition itself).
+                        readonly property color fieldColor: seg === 2 ? page.colorS
+                                                 : seg === 1 ? page.colorE : page.colorM
+                        readonly property bool fieldFill: page.lab.isFloat && seg >= 0
 
                         width: grid.cellWidth
                         height: grid.cellHeight
-                        color: on ? Theme.accentFill : "transparent"
-
-                        Rectangle { // the field band, the Win32 grid's top strip
-                            anchors.top: parent.top
-                            width: parent.width
-                            height: 2
-                            visible: page.lab.floatBarOn && parent.seg >= 0
-                            color: parent.seg === 2 ? page.colorS
-                                 : parent.seg === 1 ? page.colorE : page.colorM
-                            opacity: page.lab.floatGhost ? 0.45 : 1
+                        radius: Theme.smallControlRadius
+                        // A set bit wears the field's colour in a float reading;
+                        // the hovered field's set bits lighten. Outside a float
+                        // reading the accent fill stays, and the hover washes
+                        // over it (the Win32 grid's field tint).
+                        color: {
+                            const c = cell.fieldColor
+                            if (cell.on && cell.fieldFill) {
+                                if (!cell.hoveredField)
+                                    return c
+                                return Qt.rgba(c.r * 0.75 + 0.25, c.g * 0.75 + 0.25,
+                                               c.b * 0.75 + 0.25, 1)
+                            }
+                            if (cell.hoveredField) {
+                                const b = cell.on ? Theme.accentFill : Theme.card
+                                const a = cell.on ? 0.55 : 0.3
+                                return Qt.rgba(b.r * (1 - a) + c.r * a, b.g * (1 - a) + c.g * a,
+                                               b.b * (1 - a) + c.b * a, 1)
+                            }
+                            return cell.on ? Theme.accentFill : "transparent"
                         }
+
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top
                             anchors.topMargin: 4
                             text: String(cell.bit)
-                            color: cell.on ? Theme.accentText : Theme.faint
+                            color: cell.on
+                                ? (cell.fieldFill
+                                   ? Qt.rgba(18 / 255, 20 / 255, 24 / 255, 0.55)
+                                   : Theme.accentText)
+                                : Theme.faint
                             font.pixelSize: Theme.fontCaption - 2
                         }
                         Text {
                             anchors.centerIn: parent
                             anchors.verticalCenterOffset: 6
                             text: cell.on ? "1" : "0"
-                            color: cell.on ? Theme.accentText : Theme.text
+                            color: cell.on
+                                ? (cell.fieldFill ? "#121418" : Theme.accentText)
+                                : Theme.text
                             font.family: "Consolas"
                             font.pixelSize: Theme.fontTitle
                             font.weight: Theme.fontStrong
                         }
-                        Rectangle { // the keyboard-focus ring
-                            anchors.fill: parent
-                            color: "transparent"
-                            border.width: gridCard.keyed && page.focusBit === cell.bit ? 2 : 0
-                            border.color: Theme.accentText
-                        }
                         Rectangle { // the cell's edge, a device pixel wide
                             anchors.fill: parent
+                            radius: parent.radius
                             color: "transparent"
                             border.width: Theme.hair(page.dpr)
                             border.color: Theme.divider
+                        }
+                        Rectangle { // the field band, drawn before the focus
+                                    // ring so the ring rides over it
+                            anchors.top: parent.top
+                            width: parent.width
+                            height: 3
+                            radius: height / 2
+                            visible: cell.bandOn
+                            color: cell.fieldColor
+                            opacity: page.lab.floatGhost ? 0.45 : 1
+                        }
+                        Rectangle { // the keyboard-focus ring, riding the cell
+                                    // contour (one pixel in, one out): the
+                                    // four sides are identical, it never hides
+                                    // the band, and it reads on filled and
+                                    // empty cells alike
+                            anchors.centerIn: parent
+                            width: parent.width + 2
+                            height: parent.height + 2
+                            radius: parent.radius + 1
+                            color: "transparent"
+                            border.width: gridCard.keyed && page.focusBit === cell.bit ? 2 : 0
+                            border.color: Theme.text
                         }
                     }
                 }
@@ -405,18 +479,31 @@ Item {
                     page.lab.dragPaint(bit, grid.paintValue)
                 }
                 onPositionChanged: (mouse) => {
-                    if (!pressed)
-                        return
                     const i = grid.cellAt(mouse.x, mouse.y)
-                    page.lab.dragPaint(page.lab.width - 1 - i, grid.paintValue)
+                    const bit = page.lab.width - 1 - i
+                    if (pressed) {
+                        page.lab.dragPaint(bit, grid.paintValue)
+                        return
+                    }
+                    // Hovering the grid drives the same shared field reading
+                    // the bar's pills do (the Win32 bar's shared hoverSeg);
+                    // with no bar there is nothing to point at. The scalar
+                    // invokable, not the floatSegments list: this runs per
+                    // mouse move and a fresh 64-slot list per pixel starves
+                    // the JS GC (it fed the sandbox's 512 MB commit limit).
+                    page.lab.hoverSeg = page.lab.isFloat || page.lab.floatBarOn
+                        ? page.lab.floatSegmentAt(bit) : -1
                 }
+                onExited: page.lab.hoverSeg = -1
             }
         }
 
-        // ---- the composition bar (S|E|M), shown while the toggle is on ----
+        // ---- the composition bar (S|E|M): always there in a float reading,
+        // and in integer mode only as the host setting's hypothetical
+        // float-reading preview ----------------------------------------------
         FloatBar {
             id: floatBar
-            visible: page.lab.floatBarOn
+            visible: page.lab.isFloat || page.lab.floatBarOn
             width: parent.width
             lab: page.lab
             dpr: page.dpr

@@ -53,6 +53,10 @@ QQmlEngine* ensureEngine()
     g_engine = new QQmlEngine;
     g_engine->addImportPath(appDir() + u"/qml"_s); // QtQuick and the rest: Win顺's
     g_frame = std::make_unique<ws::WindowFrame>(true); // a resizable workbench
+    // The title bar's icon slot is drawn empty until the frame has one; this
+    // is static and set once, before any title bar exists. The png travels
+    // inside BinaryLabApp.dll's qrc (CMakeLists.txt).
+    ws::WindowFrame::setIcon(u"qrc:/qt/qml/WinShun/labicon.png"_s);
     return g_engine;
 }
 
