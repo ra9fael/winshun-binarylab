@@ -1,0 +1,324 @@
+{
+  "name": "binarylab",
+  "exe_sha256": "5ab3420e98bcbfe1b37d60a0a966e5931cceec933d38007ba30a93d1ca173c71",
+  "checks": [
+    {
+      "name": "Executable resources load",
+      "passed": true
+    },
+    {
+      "name": "Named icon group exists",
+      "passed": true,
+      "detail": [
+        "IDI_ICON1"
+      ]
+    },
+    {
+      "name": "Eight icon frames exist",
+      "passed": true,
+      "detail": 8
+    },
+    {
+      "name": "Embedded 16px icon loads",
+      "passed": true
+    },
+    {
+      "name": "Embedded 20px icon loads",
+      "passed": true
+    },
+    {
+      "name": "Embedded 24px icon loads",
+      "passed": true
+    },
+    {
+      "name": "Embedded 32px icon loads",
+      "passed": true
+    },
+    {
+      "name": "Embedded 40px icon loads",
+      "passed": true
+    },
+    {
+      "name": "Embedded 48px icon loads",
+      "passed": true
+    },
+    {
+      "name": "Embedded 64px icon loads",
+      "passed": true
+    },
+    {
+      "name": "Embedded 256px icon loads",
+      "passed": true
+    },
+    {
+      "name": "initialize returns a result",
+      "passed": true
+    },
+    {
+      "name": "Plugin initializes",
+      "passed": true,
+      "detail": "ra9fael.binarylab"
+    },
+    {
+      "name": "query returns a result",
+      "passed": true
+    },
+    {
+      "name": "action returns a result",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          16,
+          16
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 96: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          16,
+          16
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 96: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 120: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 120: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 120,
+        "size": [
+          40,
+          40
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 120: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 120: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 120: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 120,
+        "size": [
+          20,
+          20
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 120: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 144: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 144: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 144,
+        "size": [
+          48,
+          48
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 144: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 144: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 144: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 144,
+        "size": [
+          24,
+          24
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 144: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 192: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 192: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 192,
+        "size": [
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 192: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 192: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 192: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 192,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 192: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 96: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "Binary Lab DPI 96: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          16,
+          16
+        ]
+      }
+    },
+    {
+      "name": "Binary Lab DPI 96: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "Repeated DPI changes keep handles bounded",
+      "passed": true,
+      "detail": {
+        "before": [
+          20,
+          19
+        ],
+        "after": [
+          20,
+          19
+        ]
+      }
+    },
+    {
+      "name": "shutdown returns a result",
+      "passed": true
+    },
+    {
+      "name": "Plugin shuts down cleanly",
+      "passed": true,
+      "detail": 0
+    }
+  ],
+  "input": "Directed messages to owned plugin processes",
+  "passed": true
+}
