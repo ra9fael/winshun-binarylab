@@ -4,7 +4,7 @@ from pathlib import Path
 from release_metadata import read, changelog
 
 root = Path(__file__).resolve().parent.parent
-tag = os.environ.get('GITHUB_REF_NAME') if os.environ.get('GITHUB_REF_TYPE') == 'tag' else None
+tag = os.environ.get('RELEASE_TAG') or None
 manifest, release = read(root, tag)
 for name in ('CHANGELOG.md', 'CHANGELOG.en.md'):
     changelog(root, manifest['version'], name)
