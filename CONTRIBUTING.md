@@ -22,10 +22,10 @@ QML 配置额外传入 `-DCMAKE_PREFIX_PATH=<Qt kit>` 和 `-DWINSHUN_DIR=<固定
 
 1. 更新 `plugin.json.version` 和 `binarylab.rc`；`release.json` 声明类型与预览状态，QML 还固定构建依赖。版本保留纯数字。
 2. 更新双语 README、CHANGELOG、相关截图和验证证据。验证全新安装、双向替换、数据保留、查询与窗口图标；QML 未完成的页面明确列出。
-3. 使用干净提交构建，运行相关 CTest 和真实宿主验证。通过后推送分支，等待 CI 成功。
+3. 使用干净提交构建，运行相关 CTest 和真实宿主验证。通过后推送分支，再手动运行 `release.yml`，将 `ref` 设为该分支、`publish=false`，等待验证成功；分支 push 和 PR 不触发流程。
 4. 创建对应分支的 `<variant>-vX.Y.Z` 标签并推送；CI 校验身份，构建、测试并发布包和校验值。QML 预览版不会成为 latest。
 5. 串行核对 GitHub Release 附件和校验值；不替换已发布资产，修复时升补丁版本。
 
 两版 ID 必须保持 `ra9fael.binarylab`。无 Qt 依赖的 GDI 不打包 DLL；QML 缺少 `BinaryLabApp.dll` 时打包必须失败。历史 JSONL 格式保持兼容；破坏性变更须先备份并迁移。开发目录链接不能通过安装包替换，验证时使用隔离配置。
 
-提交使用 `type(scope): subject`。只提交本次改动，不提交 build / dist 或本机路径和凭据。SDK `winshun.h` 来自宿主，应单独更新。
+提交标题和正文使用英文 Angular 格式 `type(scope): subject`。只提交本次改动，不提交 build / dist 或本机路径和凭据。SDK `winshun.h` 来自宿主，应单独更新。
