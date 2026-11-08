@@ -1027,11 +1027,15 @@ inline ArithResult arithAdd(int w, bool sg, std::uint64_t ua, std::uint64_t ub)
     const std::uint64_t res = ua + ub;
     if (!sg)
         return {res, w == 64 ? res < ua : res > m};
+    // The operands arrive as raw width-bit patterns; a negative narrow
+    // pattern would read as a large positive int64 and hide an underflow
+    // (C mode never saw "0 - 2147483647 - 2" overflow), so widen first.
+    const std::int64_t sa = static_cast<std::int64_t>(widenBits(ua, w, true));
+    const std::int64_t sb = static_cast<std::int64_t>(widenBits(ub, w, true));
     if (w < 64) {
-        const std::int64_t t = static_cast<std::int64_t>(ua) + static_cast<std::int64_t>(ub);
         const std::int64_t lo = -(std::int64_t(1) << (w - 1));
         const std::int64_t hi = static_cast<std::int64_t>(m >> 1);
-        return {static_cast<std::uint64_t>(t), t < lo || t > hi};
+        return {static_cast<std::uint64_t>(sa + sb), sa + sb < lo || sa + sb > hi};
     }
     return {res, ((res ^ ua) & (res ^ ub)) >> 63 != 0};
 }
@@ -1042,11 +1046,12 @@ inline ArithResult arithSub(int w, bool sg, std::uint64_t ua, std::uint64_t ub)
     const std::uint64_t res = ua - ub;
     if (!sg)
         return {res, ua < ub};
+    const std::int64_t sa = static_cast<std::int64_t>(widenBits(ua, w, true));
+    const std::int64_t sb = static_cast<std::int64_t>(widenBits(ub, w, true));
     if (w < 64) {
-        const std::int64_t t = static_cast<std::int64_t>(ua) - static_cast<std::int64_t>(ub);
         const std::int64_t lo = -(std::int64_t(1) << (w - 1));
         const std::int64_t hi = static_cast<std::int64_t>(m >> 1);
-        return {static_cast<std::uint64_t>(t), t < lo || t > hi};
+        return {static_cast<std::uint64_t>(sa - sb), sa - sb < lo || sa - sb > hi};
     }
     return {res, ((ua ^ ub) & (res ^ ua)) >> 63 != 0};
 }

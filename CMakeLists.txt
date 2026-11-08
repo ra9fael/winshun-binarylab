@@ -159,3 +159,17 @@ endforeach()
 
 enable_testing()
 add_test(NAME binarylab_logic COMMAND binarylab_tests)
+# The expression-language spec tests: a table of frozen golden rows for
+# evalBits (see tests/test_expr_spec.cpp).
+add_executable(binarylab_expr_spec tests/test_expr_spec.cpp)
+target_include_directories(binarylab_expr_spec PRIVATE "${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_compile_options(binarylab_expr_spec PRIVATE /utf-8 /W4 /permissive-)
+else()
+    target_compile_options(binarylab_expr_spec PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8 -Wall -Wextra -O2)
+endif()
+set_target_properties(binarylab_expr_spec PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(binarylab_expr_spec PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests")
+endforeach()
+add_test(NAME binarylab_expr_spec COMMAND binarylab_expr_spec)
