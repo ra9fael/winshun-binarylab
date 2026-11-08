@@ -40,33 +40,14 @@ ICO 含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256 像素；QML 使用同源 PNG 资
 
 ## 安装
 
-**从 Win顺 插件库安装（推荐）：** 打开 **设置 → 插件 → 插件库**，搜索"二进制工作台"。
-本插件是原生 exe，属于插件库的**未审核原生插件**类别：**安装和每次更新时 Win顺 都会
-单独请求确认**，不会后台静默安装。
+1. 从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 选择 **QML**，下载 `ra9fael.binarylab-qml-<version>.wsplugin`。QML 选带 Pre-release 标记的版本。
+2. 可用旁边的 `.sha256` 文件与 `Get-FileHash <file> -Algorithm SHA256` 核对完整性。
+3. 在 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）** 中导入。全新安装后打开插件开关并确认权限。
 
-也可以手动安装：从
-[最新 Release](https://github.com/ra9fael/winshun-binarylab/releases)
-下载 `ra9fael.binarylab-qml-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
-SHA-256（`Get-FileHash <file> -Algorithm SHA256`）。然后在 Win顺 里打开
-**设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**，选中该文件。
-从本地安装包安装的插件**不会自动启用**。请在列表里打开开关；启用这一步就是你
-在确认它申请的权限（见 [权限与数据](#权限与数据)）。
+**更新或切换界面版本：** 导入目标包并确认替换；同版本覆盖与降级也允许确认。保留同 ID 的配置和独立数据目录。
+**卸载：** 在 **设置 → 插件 → 已安装** 中移除。
 
-**更新：** 插件库条目开了 `autoUpdate`，新版本发布后插件库会自动跟进收录，但每次
-更新仍需要你确认。手动安装的话，用同样方式安装新版的 `.wsplugin`。Win顺 认出是
-同一个 id，会先询问是否替换旧版本，并保留插件的数据目录。
-
-**卸载：** 在 **设置 → 插件 → 已安装** 里移除。
-
-本插件是原生包（`binarylab.exe` 启动器 + `BinaryLabApp.dll`）。"未审核"是指这一版
-源码还没有人读过：安装与更新需要你确认，SHA-256 只证明分发完整性，不代表代码已
-审核。源码、构建方式和每个 Release 对应的源码标签完全公开，见下一节。
-
-QML 工作台按 Win顺 的**共享 Qt 契约**（`runtime.qt: "host"`，`qtVersion: "6.12"`）
-复用 Win顺 自带的 Qt，包内不带 Qt 运行时。契约只保证 Qt Core / Gui / Qml / Quick
-和 `QtQuick`、`QtQuick.Controls.Basic`、`QtQuick.Layouts`；工作台复用的 Win顺 共享
-控件还会用到 `QtQuick.Shapes` 和 `QtQuick.Effects`，超出契约的保证集——不过 Win顺
-自己的界面同样依赖这两个模块，它们随宿主一起部署。
+本次通过独立 GitHub Release 分发，尚未提交双版本插件库索引或配置自动更新源。QML 包含 `binarylab.exe` 与 `BinaryLabApp.dll`，使用宿主 Qt 6.12（最低补丁 6.12.0），不捆绑 Qt 运行时。
 
 ## 从源码构建
 
@@ -374,13 +355,7 @@ stdout 只承载 JSON-RPC 行。`timeoutMs` 为 1500；在 4096 字节上限下�
 
 ## 分发与版本
 
-`runtime.program` 是原生可执行文件。社区仓库的 `plugin.schema.json` 把
-`runtime.program` 限制为解释器和官方白名单，`CONTRIBUTING.md` 也排除 exe / DLL
-提交，因此本插件由**自己的仓库以 `.wsplugin` 包分发**，用户导入 Win顺
-（见 [安装](#安装)）。不要向 `WinShun-plugins` 提源码 PR。
-`tools/package.py` 从 git 跟踪的文件和必需运行产物 `binarylab.exe` / `BinaryLabApp.dll` 打包，
-所以 `build/`、日志和任何未跟踪内容都不会进入发布包。每次发布都要递增
-`version`；见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+发布使用 `<variant>-vX.Y.Z` 标签；`plugin.json` 保持纯数字版本。打包脚本读取 `release.json`，校验类型、必需运行文件和双语版本说明，然后生成 `.wsplugin`、SHA256 与发布说明。QML 作为预览版发布；切换类型始终是用户明确选择的替换安装。流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 

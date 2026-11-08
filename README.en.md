@@ -45,48 +45,14 @@ and custom captions. ICO sizes: 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256; QML embe
 
 ## Install
 
-**Install from Win顺's in-app plugin library (recommended):** open
-**Settings → Plugins → Plugin library** and search for "Binary Lab"
-(**设置 → 插件 → 插件库**，"二进制工作台" in the Chinese UI). This plugin is a
-native exe and ships through the library's **unreviewed native package**
-category: **Win顺 asks for confirmation on installation and on every update**,
-and never installs silently in the background.
+1. Choose **QML** from [Releases](https://github.com/ra9fael/winshun-binarylab/releases) and download `ra9fael.binarylab-qml-<version>.wsplugin`. QML releases carry the Pre-release label.
+2. Optionally compare `Get-FileHash <file> -Algorithm SHA256` with the accompanying `.sha256` file.
+3. Import through **Settings → Plugins → Installed → Add plugin → Archive (.zip / .wsplugin)**. After a fresh install, enable the plugin and confirm its permissions.
 
-You can also install manually: download
-`ra9fael.binarylab-qml-<version>.wsplugin` from the
-[latest release](https://github.com/ra9fael/winshun-binarylab/releases).
-Optionally compare its SHA-256 with the `.sha256` file next to it
-(`Get-FileHash <file> -Algorithm SHA256`). Then in Win顺 open
-**Settings → Plugins → Installed → Add plugin → Archive (.zip / .wsplugin)**
-and pick the file. In the Chinese UI the same path reads
-**设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**.
-A plugin installed from a local package is **not enabled automatically**.
-Turn it on in the list; enabling it is how you confirm its permissions
-(see [Permissions](#permissions-and-data)).
+**Update or change edition:** import the selected package and confirm replacement, including same-version reinstalls or downgrades. Settings and the separate data directory retain the same ID.
+**Uninstall:** remove the plugin from **Settings → Plugins → Installed**.
 
-**Update:** the library entry has `autoUpdate` on, so a new release is picked
-up automatically — but every update still asks for your confirmation. When
-installing manually, install the newer `.wsplugin` the same way. Win顺 sees
-the same id, asks before replacing the old version, and keeps the plugin's
-data folder.
-
-**Uninstall:** remove it from **Settings → Plugins → Installed**
-(**设置 → 插件 → 已安装** in the Chinese UI).
-
-This plugin is a native package (the `binarylab.exe` starter plus
-`BinaryLabApp.dll`). "Unreviewed" means nobody has read this version's source
-yet: installation and updates ask for your confirmation, and a SHA-256 only
-proves distribution integrity, not a code review. The source, the build
-instructions and the source tag behind every release are fully public — see
-the next section.
-
-The QML workbench reuses Win顺's own Qt through the **shared Qt contract**
-(`runtime.qt: "host"`, `qtVersion: "6.12.0"`), so the package carries no Qt
-runtime of its own. The contract guarantees Qt Core / Gui / Qml / Quick and
-the `QtQuick`, `QtQuick.Controls.Basic`, `QtQuick.Layouts` modules; the
-reused Win顺 controls also touch `QtQuick.Shapes` and `QtQuick.Effects`,
-which sit outside that guaranteed set — Win顺's own UI depends on both, so
-they ship with the host.
+This release is distributed from its own GitHub repository. No two-edition gallery index or automatic update feed is configured. QML packages `binarylab.exe` and `BinaryLabApp.dll`, using host Qt 6.12 (minimum patch 6.12.0) without bundling Qt itself.
 
 ## Build from source
 
@@ -490,15 +456,7 @@ was ~81 ms p95.
 
 ## Distribution and versioning
 
-`runtime.program` is a native executable. The community repository's
-`plugin.schema.json` restricts `runtime.program` to interpreters and an
-official whitelist, and `CONTRIBUTING.md` excludes exe/DLL submissions, so
-this plugin is distributed from its **own repository as a `.wsplugin` package**
-that users import into WinShun (see [Install](#install)). Do not open a source
-PR against `WinShun-plugins`. `tools/package.py` builds the package from the
-git-tracked files plus required `binarylab.exe` and `BinaryLabApp.dll`, so the `build/` tree, logs and
-anything untracked never ship. Bump `version` for every release; see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Release tags use `<variant>-vX.Y.Z`; `plugin.json` keeps a numeric version. The packager reads `release.json`, validates the edition, required runtime files and bilingual notes, then emits the `.wsplugin`, SHA256 and release notes. QML remains a preview. Changing editions is an explicit replacement install. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
