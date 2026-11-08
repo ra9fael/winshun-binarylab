@@ -1,0 +1,38 @@
+{
+  "date": "2026-11-09",
+  "packages": [
+    {
+      "variant": "gdi",
+      "version": "0.3.2",
+      "tag": "gdi-v0.3.2",
+      "file": "ra9fael.binarylab-gdi-0.3.2.wsplugin",
+      "bytes": 975186,
+      "sha256": "15be2e05c2ba25ad7a641e403526115586ef5a3a592863e9b85b831d15823464",
+      "prerelease": false,
+      "fileVersion": "0.3.2.0",
+      "iconGroup": "IDI_ICON1",
+      "iconFrames": 8
+    },
+    {
+      "variant": "qml",
+      "version": "0.4.0",
+      "tag": "qml-v0.4.0",
+      "file": "ra9fael.binarylab-qml-0.4.0.wsplugin",
+      "bytes": 1768024,
+      "sha256": "35c4c1ff4a0d74a4235f95ef801bd93eb6849a08e4606fe0e56c9900c17a9e0b",
+      "prerelease": true,
+      "fileVersion": "0.4.0.0",
+      "iconGroup": "IDI_ICON1",
+      "iconFrames": 8
+    }
+  ],
+  "sharedIconSha256": "86fddd2105ba40d2efaa84340339a0d33b9c0303bee71fed302a127adb785907",
+  "sourceCommits": {
+    "gdi": "a182249a80cdee0a358ca3039754bdd80598c718",
+    "qml": "7e7cb72ccbd1dfa8a44c649d7d4acaade10d409f"
+  },
+  "releaseRuns": {
+    "gdi": 42514694815,
+    "qml": 42514577145
+  }
+}

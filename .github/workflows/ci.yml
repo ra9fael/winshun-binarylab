@@ -96,7 +96,7 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
-          $options = @('release', 'create', $env:GITHUB_REF_NAME, '--verify-tag', '--title', "Binary Lab $($env:VARIANT.ToUpper()) $env:VERSION", '--notes-file', 'dist/release-notes.md')
+          $options = @('release', 'create', $env:GITHUB_REF_NAME, '--verify-tag', '--target', $env:VARIANT, '--title', "Binary Lab $($env:VARIANT.ToUpper()) $env:VERSION", '--notes-file', 'dist/release-notes.md')
           if ($env:PRERELEASE -eq 'true') { $options += @('--prerelease', '--latest=false') }
           else { $options += '--latest=true' }
           $options += @(Get-ChildItem dist -File | Where-Object { $_.Name -match '\.wsplugin(\.sha256)?$' } | ForEach-Object FullName)

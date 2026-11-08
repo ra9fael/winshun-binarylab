@@ -1,0 +1,52 @@
+PASS gdi package, qml package, and test directory supplied
+PASS isolated installation directory
+PASS write owned fixture
+PASS write owned fixture
+PASS production archive and manifest inspection
+PASS shared installation identity
+PASS production installer places or replaces edition
+PASS only one plugin directory remains
+PASS QML DLL present only for QML
+PASS read installed file
+PASS installed edition matches selected package
+PASS read installed file
+PASS history survives replacement and downgrade
+PASS read installed file
+PASS settings and hotkey file unchanged
+PASS production archive and manifest inspection
+PASS shared installation identity
+PASS production installer places or replaces edition
+PASS only one plugin directory remains
+PASS QML DLL present only for QML
+PASS read installed file
+PASS installed edition matches selected package
+PASS read installed file
+PASS history survives replacement and downgrade
+PASS read installed file
+PASS settings and hotkey file unchanged
+PASS production archive and manifest inspection
+PASS shared installation identity
+PASS production installer places or replaces edition
+PASS only one plugin directory remains
+PASS QML DLL present only for QML
+PASS read installed file
+PASS installed edition matches selected package
+PASS read installed file
+PASS history survives replacement and downgrade
+PASS read installed file
+PASS settings and hotkey file unchanged
+PASS production archive and manifest inspection
+PASS shared installation identity
+PASS production installer places or replaces edition
+PASS only one plugin directory remains
+PASS QML DLL present only for QML
+PASS read installed file
+PASS installed edition matches selected package
+PASS read installed file
+PASS history survives replacement and downgrade
+PASS read installed file
+PASS settings and hotkey file unchanged
+PASS hold old executable without delete sharing
+PASS locked old executable prevents unsafe replacement
+PASS failed replacement preserves GDI
+ALL INSTALL CHECKS PASSED
