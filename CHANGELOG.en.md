@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-09
+
+### Changed
+- Separate `gdi` / `qml` branches, tags and packages; a shared plugin ID enables replacement installs.
+- One multi-resolution icon across the plugin list, executable and windows.
+- Validate version, bilingual notes and required binaries before packaging; exclude stale build files.
+- Build into an isolated output folder; CI builds the configured edition and publishes a matching tag with SHA256.
+- GDI remains independent of Qt; bump to 0.3.2.
+
+
 
 ## [0.3.1] - 2026-11-09
 

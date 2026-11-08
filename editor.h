@@ -3341,7 +3341,7 @@ void paint(HWND hwnd)
         right1 = (s.zh ? "焦点 位 " : "focus bit ") + std::to_string(s.focusBit)
                + " = " + std::to_string(getBit(s.value, s.focusBit));
     else
-        right1 = "v0.3.1";
+        right1 = "GDI v" BINARYLAB_VERSION;
     RECT sr1 { w - 12 - rightW, statusTop, w - 12, statusTop + kStatusRowH };
     drawCenteredText(mem, sr1, wideFromUtf8(right1), freshMsg ? kOkText : kLabelText);
 
@@ -3882,7 +3882,7 @@ void threadMain(EditorSpec spec)
     }
     RECT rc { 0, 0, s.clientW, s.clientH };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX), FALSE);
-    const std::wstring title = spec.zh ? L"二进制工作台" : L"Binary Lab";
+    const std::wstring title = spec.zh ? L"二进制工作台 · GDI" : L"Binary Lab · GDI";
 
     HWND hwnd = CreateWindowExW(0, kClassName, title.c_str(),
                                 WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX),

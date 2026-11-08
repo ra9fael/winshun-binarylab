@@ -7,8 +7,8 @@
 IDI_ICON1 ICON "app.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,3,1,0
- PRODUCTVERSION 0,3,1,0
+ FILEVERSION 0,3,2,0
+ PRODUCTVERSION 0,3,2,0
  FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
  FILEFLAGS 0x0L
  FILEOS VOS_NT_WINDOWS32
@@ -19,12 +19,12 @@ BEGIN
     BEGIN
         BLOCK "080404b0"
         BEGIN
-            VALUE "FileDescription", "二进制工作台 · Win顺 插件"
-            VALUE "FileVersion", "0.3.1"
+            VALUE "FileDescription", "二进制工作台 · GDI"
+            VALUE "FileVersion", "0.3.2"
             VALUE "InternalName", "binarylab"
             VALUE "OriginalFilename", "binarylab.exe"
             VALUE "ProductName", "Win顺 · WinShun"
-            VALUE "ProductVersion", "0.3.1"
+            VALUE "ProductVersion", "0.3.2"
         END
     END
     BLOCK "VarFileInfo"

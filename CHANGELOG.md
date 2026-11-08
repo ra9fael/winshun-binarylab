@@ -5,10 +5,20 @@
 All notable changes to this plugin. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). The version in `plugin.json` is the
-single source of truth; release tags are `v<version>`. Design decisions and
+single source of truth; release tags are `<variant>-v<version>`. Design decisions and
 future phases live in [ROADMAP.md](ROADMAP.md).
 
 ## [Unreleased]
+
+## [0.3.2] - 2026-11-09
+
+### 变更
+- 整理 `gdi` / `qml` 双分支，相同插件 ID 实现替换安装；包名和标签区分版本类型。
+- 插件管理列表和程序窗口使用统一多尺寸图标。
+- 打包校验版本、双语说明和必需运行文件，排除构建残留；独立目录构建避免覆盖运行中的程序。
+- CI 按分支配置构建，标签匹配后发布 `.wsplugin` 和 SHA256。
+- GDI 保持无 Qt 依赖；版本更新到 0.3.2。
+
 
 ### Added
 - Full-precedence integer expressions in `bits` and in the workbench

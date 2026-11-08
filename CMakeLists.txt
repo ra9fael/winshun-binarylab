@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 project(binarylab LANGUAGES CXX)
 
+set(BINARYLAB_OUTPUT_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH "Plugin runtime output folder")
+file(READ "${CMAKE_SOURCE_DIR}/plugin.json" binarylab_manifest)
+string(JSON BINARYLAB_VERSION GET "${binarylab_manifest}" version)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -8,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # The generated C++ template builds the exe straight into the plugin folder,
 # because plugin.json names it as runtime.program. Keep that convention.
 add_executable(binarylab main.cpp binarylab.rc)
+target_compile_definitions(binarylab PRIVATE BINARYLAB_VERSION="${BINARYLAB_VERSION}")
 target_compile_definitions(binarylab PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 # The v2 editor window: user32 (windows, DPI) and gdi32 (painting).
 target_link_libraries(binarylab PRIVATE user32 gdi32)
@@ -23,9 +28,9 @@ else()
     target_link_options(binarylab PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 
-set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
+set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BINARYLAB_OUTPUT_DIR}")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-    set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}")
+    set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${BINARYLAB_OUTPUT_DIR}")
 endforeach()
 
 # Pure-logic tests: logic.h and formats.h have no OS dependency, so they build and run on any
@@ -46,3 +51,6 @@ endforeach()
 
 enable_testing()
 add_test(NAME binarylab_logic COMMAND binarylab_tests)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME binarylab_package COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_package.py")

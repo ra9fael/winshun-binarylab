@@ -15,10 +15,38 @@ bits page lets you click bits, drag-paint, and copy the edited value in any
 base; the bytes page lets you select bytes, switch endianness, or walk decoded
 records field by field.
 
+![Binary Lab GDI](docs/gdi-window.png)
+
+## GDI / QML editions
+
+This branch is **GDI 0.3.2**.
+
+| Item | GDI | QML |
+|---|---|---|
+| Branch | `gdi` (default) | `qml` |
+| Tag | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
+| Package | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
+| Runtime | Native Win32 / GDI, no Qt dependency | Host Qt 6.12, minimum patch 6.12.0; WinShun ≥ 0.22.0 |
+| Status | Stable | Preview; bits window works, bytes / struct / settings pages are still being ported |
+
+Both editions use `ra9fael.binarylab`, so **only one is installed per WinShun profile**.
+Import the other `.wsplugin` and confirm replacement, including same-version reinstalls and downgrades.
+The host stops the old process and replaces its whole installation directory. Settings,
+shortcuts and the separate data directory survive. Both read the same `history.jsonl` format.
+Switching back to GDI removes the QML DLL from the installation directory.
+Development directory links cannot be replaced by an archive; use an isolated test profile.
+
+Choose GDI or QML from [Releases](https://github.com/ra9fael/winshun-binarylab/releases).
+QML releases are marked Pre-release. Each edition increments its own numeric version
+and ships a SHA256 sidecar. Updates are selected manually; no update feed switches editions.
+
+Both editions share the Phosphor binary icon for plugin lists, the executable, windows
+and custom captions. ICO sizes: 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256; QML embeds matching PNGs.
+
 ## Install
 
-1. Download `ra9fael.binarylab-<version>.wsplugin` from the
-   [latest release](https://github.com/ra9fael/winshun-binarylab/releases/latest).
+1. Download `ra9fael.binarylab-gdi-<version>.wsplugin` from the
+   [latest release](https://github.com/ra9fael/winshun-binarylab/releases).
    Optionally compare its SHA-256 with the `.sha256` file next to it
    (`Get-FileHash <file> -Algorithm SHA256`).
 2. In Win顺 open **Settings → Plugins → Installed → Add plugin →
@@ -48,7 +76,7 @@ integration tests.
 cmake -S . -B build -A x64                 # MSVC; for MinGW use -G "MinGW Makefiles"
 cmake --build build --config Release       # writes binarylab.exe next to plugin.json
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-gdi-<version>.wsplugin
 ```
 
 To run a local build inside Win顺 without packaging, and for tests and the

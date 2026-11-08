@@ -11,10 +11,37 @@
 自己的窗口：位页可点击置位、拖拽刷位，以任意进制复制修改后的值；字节流页可拖选
 字节、切换端序，或按记录格式逐字段查看解码结果。
 
+![Binary Lab GDI](docs/gdi-window.png)
+
+## GDI / QML 双版本
+
+本分支为 **GDI 0.3.2**。
+
+| 项目 | GDI | QML |
+|---|---|---|
+| 分支 | `gdi`（默认） | `qml` |
+| 标签 | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
+| 安装包 | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
+| 运行时 | 原生 Win32 / GDI，无 Qt 依赖 | Win顺提供 Qt 6.12，最低补丁 6.12.0；Win顺 ≥ 0.22.0 |
+| 状态 | 稳定版 | 预览版；bits 窗口可用，bytes / struct / 设置窗口页仍在移植 |
+
+两版的插件 ID 都是 `ra9fael.binarylab`，**同一个 Win顺配置内互斥安装**。
+导入另一版的 `.wsplugin`，确认替换即可；同版本覆盖和降级也走此确认。
+宿主先停止旧进程，再整体替换安装目录；设置、快捷键和独立数据目录保留。
+历史使用同一个 `history.jsonl` 格式。切回 GDI 后不会把 QML DLL 留在安装目录。
+开发目录链接不能直接被安装包替换，请使用独立测试配置。
+
+从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 按 GDI / QML 名称选择包，
+QML 的 Release 标记为 Pre-release。版本号各自递增；安装包旁边提供 SHA256。
+当前手动选择版本更新；尚未接入会跨版本类型切换的自动更新源。
+
+图标来自同一套 Phosphor binary 图形，覆盖插件列表、EXE、窗口及自绘标题栏。
+ICO 含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256 像素；QML 使用同源 PNG 资源。
+
 ## 安装
 
-1. 从 [最新 Release](https://github.com/ra9fael/winshun-binarylab/releases/latest)
-   下载 `ra9fael.binarylab-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
+1. 从 [最新 Release](https://github.com/ra9fael/winshun-binarylab/releases)
+   下载 `ra9fael.binarylab-gdi-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
    SHA-256（`Get-FileHash <file> -Algorithm SHA256`）。
 2. 在 Win顺 里打开 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**，
    选中该文件。
@@ -38,7 +65,7 @@
 cmake -S . -B build -A x64                 # MSVC；MinGW 用 -G "MinGW Makefiles"
 cmake --build build --config Release       # 在 plugin.json 旁边生成 binarylab.exe
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-gdi-<version>.wsplugin
 ```
 
 本地构建如何直接在 Win顺 里运行，以及测试和发版流程，见

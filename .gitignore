@@ -14,3 +14,7 @@ binarylab.exe
 dist/
 __pycache__/
 *.pyc
+
+BinaryLabApp.dll
+*.locked.*.exe
+*.locked.*.dll
