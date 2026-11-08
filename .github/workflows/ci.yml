@@ -44,6 +44,10 @@ jobs:
           version: ${{ steps.meta.outputs.qt }}
           arch: win64_msvc2022_64
           cache: true
+          cache-key-prefix: binarylab-qt-aqt-5a49f2b
+          setup-python: false
+          # aqt 3.3.0 predates the Qt >= 6.11 Windows compiler-specific feeds.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7
       - name: Configure
         shell: pwsh
         env:
