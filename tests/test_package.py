@@ -51,7 +51,7 @@ class PackageTests(unittest.TestCase):
         (self.root / 'stray.dll').write_bytes(b'MZstale')
         self.save()
         target = package(self.root, self.build, self.out, 'gdi-v1.2.3')
-        self.assertEqual(target.name, 'ra9fael.binarylab-gdi-1.2.3.wsplugin')
+        self.assertEqual(target.name, 'ra9fael.binarylab-1.2.3.wsplugin')
         with zipfile.ZipFile(target) as archive:
             self.assertIn('binarylab.exe', archive.namelist())
             self.assertFalse(any(n.lower().endswith('.dll') for n in archive.namelist()))

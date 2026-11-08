@@ -62,7 +62,9 @@ def package(root: Path, build: Path, out: Path, tag: str | None = None) -> Path:
     data = buffer.getvalue()
     if len(data) > MAX_BYTES:
         raise ValueError('Archive exceeds 256 MiB')
-    filename = f"{manifest['id']}-{variant}-{version}.wsplugin"
+    # Registry assets must use the manifest ID; the GDI edition is in the tag.
+    suffix = '-qml' if variant == 'qml' else ''
+    filename = f"{manifest['id']}{suffix}-{version}.wsplugin"
     digest = hashlib.sha256(data).hexdigest()
     out.mkdir(parents=True, exist_ok=True)
     target = out / filename

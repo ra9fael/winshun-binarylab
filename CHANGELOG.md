@@ -15,6 +15,7 @@ future phases live in [ROADMAP.md](ROADMAP.md).
 ### 修复
 
 - 声明最低 Win顺 版本为 0.22.0，满足未审核原生插件的安装确认要求。
+- GDI 包名使用 `ra9fael.binarylab-<version>.wsplugin`，与清单 ID 一致；版本类型由 tag 区分。
 - 保持 GDI 版本无 Qt 依赖，发布入口仅为新版本 tag 和手动运行，并保留既有逻辑与打包测试。
 
 ## [0.3.2] - 2026-11-09

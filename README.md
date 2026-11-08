@@ -21,7 +21,7 @@
 |---|---|---|
 | 分支 | `gdi`（默认） | `qml` |
 | 标签 | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
-| 安装包 | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
+| 安装包 | `ra9fael.binarylab-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
 | 运行时 | 原生 Win32 / GDI，无 Qt 依赖 | Win顺提供 Qt 6.12，最低补丁 6.12.0；Win顺 ≥ 0.22.0 |
 | 状态 | 稳定版 | 预览版；bits 窗口可用，bytes / struct / 设置窗口页仍在移植 |
 
@@ -40,7 +40,7 @@ ICO 含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256 像素；QML 使用同源 PNG 资
 
 ## 安装
 
-1. 从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 选择 **GDI**，下载 `ra9fael.binarylab-gdi-<version>.wsplugin`。QML 选带 Pre-release 标记的版本。
+1. 从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 选择 **GDI**，下载 `ra9fael.binarylab-<version>.wsplugin`。QML 选带 Pre-release 标记的版本。
 2. 可用旁边的 `.sha256` 文件与 `Get-FileHash <file> -Algorithm SHA256` 核对完整性。
 3. 在 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）** 中导入。全新安装后打开插件开关并确认权限。
 
@@ -58,7 +58,7 @@ ICO 含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256 像素；QML 使用同源 PNG 资
 cmake -S . -B build -A x64                 # MSVC；MinGW 用 -G "MinGW Makefiles"
 cmake --build build --config Release       # 在 plugin.json 旁边生成 binarylab.exe
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-gdi-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
 ```
 
 本地构建如何直接在 Win顺 里运行，以及测试和发版流程，见

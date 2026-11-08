@@ -25,7 +25,7 @@ This branch is **GDI 0.3.3**.
 |---|---|---|
 | Branch | `gdi` (default) | `qml` |
 | Tag | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
-| Package | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
+| Package | `ra9fael.binarylab-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
 | Runtime | Native Win32 / GDI, no Qt dependency | Host Qt 6.12, minimum patch 6.12.0; WinShun ≥ 0.22.0 |
 | Status | Stable | Preview; bits window works, bytes / struct / settings pages are still being ported |
 
@@ -45,7 +45,7 @@ and custom captions. ICO sizes: 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256; QML embe
 
 ## Install
 
-1. Choose **GDI** from [Releases](https://github.com/ra9fael/winshun-binarylab/releases) and download `ra9fael.binarylab-gdi-<version>.wsplugin`. QML releases carry the Pre-release label.
+1. Choose **GDI** from [Releases](https://github.com/ra9fael/winshun-binarylab/releases) and download `ra9fael.binarylab-<version>.wsplugin`. QML releases carry the Pre-release label.
 2. Optionally compare `Get-FileHash <file> -Algorithm SHA256` with the accompanying `.sha256` file.
 3. Import through **Settings → Plugins → Installed → Add plugin → Archive (.zip / .wsplugin)**. After a fresh install, enable the plugin and confirm its permissions.
 
@@ -64,7 +64,7 @@ integration tests.
 cmake -S . -B build -A x64                 # MSVC; for MinGW use -G "MinGW Makefiles"
 cmake --build build --config Release       # writes binarylab.exe next to plugin.json
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-gdi-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
 ```
 
 To run a local build inside Win顺 without packaging, and for tests and the

@@ -9,6 +9,7 @@
 ### Fixed
 
 - Require WinShun 0.22.0 for installation consent for unreviewed native plugins.
+- Name GDI packages `ra9fael.binarylab-<version>.wsplugin` to match the manifest ID; the tag identifies the edition.
 - Keep the GDI edition independent of Qt, with new-tag and manual release entry points and the existing logic and packaging tests.
 
 ## [0.3.2] - 2026-11-09
