@@ -1,40 +1,100 @@
-# Build and unit-test every push and pull request, and keep the package as a
-# workflow artifact so a change can be tried before it is released.
-name: ci
+name: build-and-release
 
 on:
   push:
-    branches: [main]
+    branches: [gdi, qml]
+    tags: ["gdi-v*.*.*", "qml-v*.*.*"]
   pull_request:
+    branches: [gdi, qml]
+  workflow_dispatch:
 
-defaults:
-  run:
-    shell: bash
+permissions:
+  contents: read
+
+concurrency:
+  group: binarylab-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      variant: ${{ steps.meta.outputs.variant }}
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
+      - name: Validate release identity
+        id: meta
+        run: python tools/ci_metadata.py
+      - name: Checkout pinned WinShun controls
+        if: steps.meta.outputs.variant == 'qml'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.meta.outputs.host_repository }}
+          ref: ${{ steps.meta.outputs.host_ref }}
+          path: build/host-source
+      - name: Install matching Qt kit
+        if: steps.meta.outputs.variant == 'qml'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ steps.meta.outputs.qt }}
+          arch: win64_msvc2022_64
+          cache: true
       - name: Configure
-        run: cmake -S . -B build -A x64
-
+        shell: pwsh
+        env:
+          VARIANT: ${{ steps.meta.outputs.variant }}
+        run: |
+          $options = @('-S', '.', '-B', 'build/release', '-A', 'x64', '-DBINARYLAB_OUTPUT_DIR=${{ github.workspace }}/build/bin')
+          if ($env:VARIANT -eq 'qml') {
+            $options += '-DWINSHUN_DIR=${{ github.workspace }}/build/host-source'
+          }
+          cmake @options
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
-        run: cmake --build build --config Release
-
-      - name: Unit tests
-        run: ctest --test-dir build -C Release --output-on-failure
-
+        run: cmake --build build/release --config Release
+      - name: Tests
+        run: ctest --test-dir build/release -C Release --output-on-failure
       - name: Package
-        run: python tools/package.py
-
+        shell: pwsh
+        run: |
+          $options = @('tools/package.py', '--build-dir', 'build/bin')
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $options += @('--tag', $env:GITHUB_REF_NAME) }
+          python @options
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: wsplugin
+          name: binarylab-${{ steps.meta.outputs.variant }}-${{ steps.meta.outputs.version }}
           path: dist/
           if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: binarylab-${{ needs.build.outputs.variant }}-${{ needs.build.outputs.version }}
+          path: dist
+      - name: Publish verified package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VARIANT: ${{ needs.build.outputs.variant }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          $options = @('release', 'create', $env:GITHUB_REF_NAME, '--verify-tag', '--title', "Binary Lab $($env:VARIANT.ToUpper()) $env:VERSION", '--notes-file', 'dist/release-notes.md')
+          if ($env:PRERELEASE -eq 'true') { $options += @('--prerelease', '--latest=false') }
+          else { $options += '--latest=true' }
+          $options += @(Get-ChildItem dist -File | Where-Object { $_.Name -match '\.wsplugin(\.sha256)?$' } | ForEach-Object FullName)
+          gh @options
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

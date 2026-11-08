@@ -11,6 +11,33 @@
 自己的窗口：位页可点击置位、拖拽刷位，以任意进制复制修改后的值；字节流页可拖选
 字节、切换端序，或按记录格式逐字段查看解码结果。
 
+![Binary Lab QML Preview](docs/qml-window.png)
+
+## GDI / QML 双版本
+
+本分支为 **QML 0.4.0 预览版**。
+
+| 项目 | GDI | QML |
+|---|---|---|
+| 分支 | `gdi`（默认） | `qml` |
+| 标签 | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
+| 安装包 | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
+| 运行时 | 原生 Win32 / GDI，无 Qt 依赖 | Win顺提供 Qt 6.12，最低补丁 6.12.0；Win顺 ≥ 0.22.0 |
+| 状态 | 稳定版 | 预览版；bits 窗口可用，bytes / struct / 设置窗口页仍在移植 |
+
+两版的插件 ID 都是 `ra9fael.binarylab`，**同一个 Win顺配置内互斥安装**。
+导入另一版的 `.wsplugin`，确认替换即可；同版本覆盖和降级也走此确认。
+宿主先停止旧进程，再整体替换安装目录；设置、快捷键和独立数据目录保留。
+历史使用同一个 `history.jsonl` 格式。切回 GDI 后不会把 QML DLL 留在安装目录。
+开发目录链接不能直接被安装包替换，请使用独立测试配置。
+
+从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 按 GDI / QML 名称选择包，
+QML 的 Release 标记为 Pre-release。版本号各自递增；安装包旁边提供 SHA256。
+当前手动选择版本更新；尚未接入会跨版本类型切换的自动更新源。
+
+图标来自同一套 Phosphor binary 图形，覆盖插件列表、EXE、窗口及自绘标题栏。
+ICO 含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256 像素；QML 使用同源 PNG 资源。
+
 ## 安装
 
 **从 Win顺 插件库安装（推荐）：** 打开 **设置 → 插件 → 插件库**，搜索"二进制工作台"。
@@ -18,8 +45,8 @@
 单独请求确认**，不会后台静默安装。
 
 也可以手动安装：从
-[最新 Release](https://github.com/ra9fael/winshun-binarylab/releases/latest)
-下载 `ra9fael.binarylab-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
+[最新 Release](https://github.com/ra9fael/winshun-binarylab/releases)
+下载 `ra9fael.binarylab-qml-<version>.wsplugin`。可选：用旁边的 `.sha256` 文件核对
 SHA-256（`Get-FileHash <file> -Algorithm SHA256`）。然后在 Win顺 里打开
 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）**，选中该文件。
 从本地安装包安装的插件**不会自动启用**。请在列表里打开开关；启用这一步就是你
@@ -43,6 +70,13 @@ QML 工作台按 Win顺 的**共享 Qt 契约**（`runtime.qt: "host"`，`qtVers
 
 ## 从源码构建
 
+需要 MSVC x64 Release 和 Qt 6.12.0；按照 `release.json` 的固定提交取得 WinShun 源码，
+设置 `-DWINSHUN_DIR=<源码目录> -DCMAKE_PREFIX_PATH=<Qt kit>`。
+可设置 `-DBINARYLAB_OUTPUT_DIR=<独立目录>` 避免覆盖运行中的程序，打包时传入同目录的 `--build-dir`。
+
+以下工作台详细说明保留了 GDI 的行为规格；QML 当前仅 bits 页已实现，
+bytes / struct 查询仍由共享计算核心处理，相关窗口页和设置页不属于本预览版已实现功能。
+
 环境要求：Windows 10/11 x64、CMake 3.21+ 和 Visual Studio 2022 及以上（MSVC x64）。
 qml 分支的 QML 工作台动态链接 Win顺 的 Qt（共享 Qt 契约只支持 MSVC），MinGW 构建
 不适用；打包和集成测试需要 Python 3.10+。
@@ -55,7 +89,7 @@ qml 分支的 QML 工作台动态链接 Win顺 的 Qt（共享 Qt 契约只支�
 cmake -S . -B build -A x64                 # MSVC
 cmake --build build --config Release       # 在 plugin.json 旁边生成 binarylab.exe
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-qml-<version>.wsplugin
 ```
 
 本地构建如何直接在 Win顺 里运行，以及测试和发版流程，见
@@ -311,15 +345,14 @@ LSB / MSB 按钮重写表达式里的字节序词。滚轮翻记录，Shift+滚�
 窗口）。未声明 `network`、`files:write`、`clipboard:read`、`processes`、
 `notifications`、`elevated`、`contentSearch`、`ai.expose`、`hostHotkeys` 能力。
 
-插件除读取 `formatDir` 下的 TOML 外不写磁盘，也不使用 `WS_DATA_DIR`
-（历史写到宿主提供的 `dataDir`）。密钥必须使用宿主的 `password` 设置类型；
+插件读取 `formatDir` 下的 TOML，并可向宿主提供的 `dataDir` 写入历史；写入不可用时退化为会话历史。密钥必须使用宿主的 `password` 设置类型；
 这里没有用到。不上传任何用户数据：没有任何网络调用。
 
 ## 构建与运行时依赖
 
 - Windows，支持 C++ 常驻插件协议的 Win顺（JSON-RPC 2.0，stdio 上每行一条 UTF-8 消息）。
-- C++17 编译器。MSVC（静态 CRT，`/utf-8`）或 MinGW-w64（静态 `-static` 链接）均可。
-  不用 Qt、不需要运行时 DLL。唯一的第三方代码是随仓库 vendor 的
+- MSVC x64 Release：启动器静态 CRT，界面 DLL 动态链接 Qt；不支持 MinGW 共享宿主运行时。
+  QML 使用宿主 Qt，并随包提供 BinaryLabApp.dll。唯一的第三方代码是随仓库 vendor 的
   [toml++](https://github.com/marzer/tomlplusplus) v3.4.0（MIT，单头
   `third_party/tomlplusplus/toml.hpp`，以 `TOML_EXCEPTIONS=0` 编译并以 SYSTEM
   include 引入），用于解析记录格式 TOML。
@@ -329,20 +362,13 @@ LSB / MSB 按钮重写表达式里的字节序词。滚轮翻记录，Shift+滚�
 
 ## 验证
 
-完整矩阵和实测结果见 [TESTPLAN.md](TESTPLAN.md)。摘要：**378/378** 条纯逻辑断言通过
-（含 GCC `#pragma pack` 的 `sizeof` / `alignof` / `offsetof` 参照值和记录格式 /
-TOML 加载用例），交互工作台的位页与字节页由
-[workbench_drive.py](tools/verify/workbench_drive.py) 通过 JSON-RPC 实机驱动，
-逐项断言布局、点击、拖选、快捷键与剪贴板内容（`ALL CHECKS PASSED`）。
-
-**尚未验证**：Win顺 GUI 的消息日志和悬停面板、`preview.text` 的等宽对齐、
-键盘手感，以及把打包好的 `.wsplugin` 导入全新配置。
+本轮两版构建、打包、宿主运行与图标检查见 [双版本验证](docs/variant-validation.md)。
+QML 的 bytes / struct / 设置窗口页未完成；GDI 旧版工作台验证不能代表 QML 已支持这些页面。
 
 ## 失败处理
 
 解析错误、字面量越界、不支持的 ABI 构造、超出容量上限，都会返回一行不可操作的
-结果，带稳定错误码和修正后的示例；不返回部分结果或编造的结果。不存在缺失依赖
-（本来就没有），也没有可失败的网络。所有诊断信息走 stderr（`plugins.log`），
+结果，带稳定错误码和修正后的示例；不返回部分结果或编造的结果。QML 需要匹配的宿主 Qt 和包内 BinaryLabApp.dll；宿主版本不匹配会拒绝启动，缺失 DLL 会报告启动错误。没有网络请求。所有诊断信息走 stderr（`plugins.log`），
 stdout 只承载 JSON-RPC 行。`timeoutMs` 为 1500；在 4096 字节上限下实测最慢查询
 约 81 ms p95。
 
@@ -352,7 +378,7 @@ stdout 只承载 JSON-RPC 行。`timeoutMs` 为 1500；在 4096 字节上限下�
 `runtime.program` 限制为解释器和官方白名单，`CONTRIBUTING.md` 也排除 exe / DLL
 提交，因此本插件由**自己的仓库以 `.wsplugin` 包分发**，用户导入 Win顺
 （见 [安装](#安装)）。不要向 `WinShun-plugins` 提源码 PR。
-`tools/package.py` 从 git 跟踪的文件加上构建好的 `binarylab.exe` 打包，
+`tools/package.py` 从 git 跟踪的文件和必需运行产物 `binarylab.exe` / `BinaryLabApp.dll` 打包，
 所以 `build/`、日志和任何未跟踪内容都不会进入发布包。每次发布都要递增
 `version`；见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

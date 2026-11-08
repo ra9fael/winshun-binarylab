@@ -11,6 +11,7 @@
 // PluginMain.cpp): Win顺's Qt, Win顺's font, the renderer the host is using.
 
 #include "editor.h"
+#include "../qt_window_icon.h"
 #include "../winshun.h"
 
 #include <QGuiApplication>
@@ -84,6 +85,7 @@ void startGui(const QString& appDir, bool software)
     QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
     ws::SystemTheme::setBackdropAvailable(!software && ws::win::backdropSupported());
     applyUiFont(appDir);
+    setPluginWindowIcon();
     if (ws::SystemTheme::backdropAvailable()) {
         QFont font = QGuiApplication::font();
         font.setStyleStrategy(QFont::StyleStrategy(font.styleStrategy() | QFont::NoSubpixelAntialias));

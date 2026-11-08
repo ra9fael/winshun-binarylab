@@ -1,0 +1,465 @@
+{
+  "runs": [
+    {
+      "variant": "gdi",
+      "scale": "1",
+      "passed": true
+    },
+    {
+      "variant": "qml",
+      "scale": "1",
+      "passed": true
+    },
+    {
+      "variant": "qml",
+      "scale": "1.25",
+      "passed": true
+    },
+    {
+      "variant": "qml",
+      "scale": "1.5",
+      "passed": true
+    },
+    {
+      "variant": "qml",
+      "scale": "2",
+      "passed": true
+    }
+  ],
+  "checks": [
+    {
+      "name": "gdi-1: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "gdi-1: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          16,
+          16
+        ]
+      }
+    },
+    {
+      "name": "gdi-1: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-96: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          16,
+          16
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-96: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-120: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-120: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 120,
+        "size": [
+          40,
+          40
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-120: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-120: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-120: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 120,
+        "size": [
+          20,
+          20
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-120: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-144: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-144: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 144,
+        "size": [
+          48,
+          48
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-144: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-144: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-144: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 144,
+        "size": [
+          24,
+          24
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-144: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-192: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-192: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 192,
+        "size": [
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-192: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-192: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-192: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 192,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-192: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: large window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: large icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-96: large icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: small window icon is assigned",
+      "passed": true
+    },
+    {
+      "name": "gdi-1-96: small icon matches DPI",
+      "passed": true,
+      "detail": {
+        "dpi": 96,
+        "size": [
+          16,
+          16
+        ]
+      }
+    },
+    {
+      "name": "gdi-1-96: small icon pixels match app.ico",
+      "passed": true
+    },
+    {
+      "name": "gdi-1 real host exits cleanly",
+      "passed": true,
+      "detail": 0
+    },
+    {
+      "name": "gdi-1 plugin uses strict sandbox",
+      "passed": true
+    },
+    {
+      "name": "gdi-1 action opened editor",
+      "passed": true
+    },
+    {
+      "name": "qml-1 window icon 1 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-1 icon 1 uses supplied resolution",
+      "passed": true,
+      "detail": 32
+    },
+    {
+      "name": "qml-1 icon 1 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 32,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-1 window icon 0 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-1 icon 0 uses supplied resolution",
+      "passed": true,
+      "detail": 16
+    },
+    {
+      "name": "qml-1 icon 0 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 16,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-1 real host exits cleanly",
+      "passed": true,
+      "detail": 0
+    },
+    {
+      "name": "qml-1 plugin uses strict sandbox",
+      "passed": true
+    },
+    {
+      "name": "qml-1 action opened editor",
+      "passed": true
+    },
+    {
+      "name": "qml-1.25 window icon 1 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-1.25 icon 1 uses supplied resolution",
+      "passed": true,
+      "detail": 32
+    },
+    {
+      "name": "qml-1.25 icon 1 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 32,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-1.25 window icon 0 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-1.25 icon 0 uses supplied resolution",
+      "passed": true,
+      "detail": 16
+    },
+    {
+      "name": "qml-1.25 icon 0 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 16,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-1.25 real host exits cleanly",
+      "passed": true,
+      "detail": 0
+    },
+    {
+      "name": "qml-1.25 plugin uses strict sandbox",
+      "passed": true
+    },
+    {
+      "name": "qml-1.25 action opened editor",
+      "passed": true
+    },
+    {
+      "name": "qml-1.5 window icon 1 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-1.5 icon 1 uses supplied resolution",
+      "passed": true,
+      "detail": 32
+    },
+    {
+      "name": "qml-1.5 icon 1 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 32,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-1.5 window icon 0 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-1.5 icon 0 uses supplied resolution",
+      "passed": true,
+      "detail": 16
+    },
+    {
+      "name": "qml-1.5 icon 0 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 16,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-1.5 real host exits cleanly",
+      "passed": true,
+      "detail": 0
+    },
+    {
+      "name": "qml-1.5 plugin uses strict sandbox",
+      "passed": true
+    },
+    {
+      "name": "qml-1.5 action opened editor",
+      "passed": true
+    },
+    {
+      "name": "qml-2 window icon 1 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-2 icon 1 uses supplied resolution",
+      "passed": true,
+      "detail": 32
+    },
+    {
+      "name": "qml-2 icon 1 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 32,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-2 window icon 0 exists",
+      "passed": true
+    },
+    {
+      "name": "qml-2 icon 0 uses supplied resolution",
+      "passed": true,
+      "detail": 16
+    },
+    {
+      "name": "qml-2 icon 0 matches shared artwork",
+      "passed": true,
+      "detail": {
+        "size": 16,
+        "max_delta": 1
+      }
+    },
+    {
+      "name": "qml-2 real host exits cleanly",
+      "passed": true,
+      "detail": 0
+    },
+    {
+      "name": "qml-2 plugin uses strict sandbox",
+      "passed": true
+    },
+    {
+      "name": "qml-2 action opened editor",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "QML runs labelled with QT_SCALE_FACTOR verified icons at the actual 96-DPI desktop; this does not establish native DPI transition coverage.",
+    "GDI DPI checks use directed WM_DPICHANGED messages.",
+    "No real taskbar, Alt+Tab or cross-monitor dragging automation."
+  ]
+}

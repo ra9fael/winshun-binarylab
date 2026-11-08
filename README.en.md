@@ -15,6 +15,34 @@ bits page lets you click bits, drag-paint, and copy the edited value in any
 base; the bytes page lets you select bytes, switch endianness, or walk decoded
 records field by field.
 
+![Binary Lab QML Preview](docs/qml-window.png)
+
+## GDI / QML editions
+
+This branch is **QML 0.4.0 Preview**.
+
+| Item | GDI | QML |
+|---|---|---|
+| Branch | `gdi` (default) | `qml` |
+| Tag | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
+| Package | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
+| Runtime | Native Win32 / GDI, no Qt dependency | Host Qt 6.12, minimum patch 6.12.0; WinShun ≥ 0.22.0 |
+| Status | Stable | Preview; bits window works, bytes / struct / settings pages are still being ported |
+
+Both editions use `ra9fael.binarylab`, so **only one is installed per WinShun profile**.
+Import the other `.wsplugin` and confirm replacement, including same-version reinstalls and downgrades.
+The host stops the old process and replaces its whole installation directory. Settings,
+shortcuts and the separate data directory survive. Both read the same `history.jsonl` format.
+Switching back to GDI removes the QML DLL from the installation directory.
+Development directory links cannot be replaced by an archive; use an isolated test profile.
+
+Choose GDI or QML from [Releases](https://github.com/ra9fael/winshun-binarylab/releases).
+QML releases are marked Pre-release. Each edition increments its own numeric version
+and ships a SHA256 sidecar. Updates are selected manually; no update feed switches editions.
+
+Both editions share the Phosphor binary icon for plugin lists, the executable, windows
+and custom captions. ICO sizes: 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256; QML embeds matching PNGs.
+
 ## Install
 
 **Install from Win顺's in-app plugin library (recommended):** open
@@ -25,8 +53,8 @@ category: **Win顺 asks for confirmation on installation and on every update**,
 and never installs silently in the background.
 
 You can also install manually: download
-`ra9fael.binarylab-<version>.wsplugin` from the
-[latest release](https://github.com/ra9fael/winshun-binarylab/releases/latest).
+`ra9fael.binarylab-qml-<version>.wsplugin` from the
+[latest release](https://github.com/ra9fael/winshun-binarylab/releases).
 Optionally compare its SHA-256 with the `.sha256` file next to it
 (`Get-FileHash <file> -Algorithm SHA256`). Then in Win顺 open
 **Settings → Plugins → Installed → Add plugin → Archive (.zip / .wsplugin)**
@@ -53,7 +81,7 @@ instructions and the source tag behind every release are fully public — see
 the next section.
 
 The QML workbench reuses Win顺's own Qt through the **shared Qt contract**
-(`runtime.qt: "host"`, `qtVersion: "6.12"`), so the package carries no Qt
+(`runtime.qt: "host"`, `qtVersion: "6.12.0"`), so the package carries no Qt
 runtime of its own. The contract guarantees Qt Core / Gui / Qml / Quick and
 the `QtQuick`, `QtQuick.Controls.Basic`, `QtQuick.Layouts` modules; the
 reused Win顺 controls also touch `QtQuick.Shapes` and `QtQuick.Effects`,
@@ -62,12 +90,20 @@ they ship with the host.
 
 ## Build from source
 
+Use MSVC x64 Release and Qt 6.12.0. Check out the WinShun commit in `release.json`,
+then set `-DWINSHUN_DIR=<checkout> -DCMAKE_PREFIX_PATH=<Qt kit>`.
+Set `-DBINARYLAB_OUTPUT_DIR=<isolated folder>` and pass the same `--build-dir` to packaging.
+
+The detailed workbench descriptions below retain the GDI behavior specification.
+Only the bits window is implemented in this QML preview. Shared bytes / struct queries work;
+their window pages and the settings page are still placeholders.
+
 Requirements: Windows 10/11 x64, CMake 3.21+ and Visual Studio 2022 or later
 (MSVC x64). The QML workbench on the `qml` branch links Win顺's Qt dynamically
 (the shared Qt contract supports MSVC only), so MinGW builds do not apply.
 Python 3.10+ for packaging and the integration tests.
 
-> The QML workbench prototype additionally needs a Qt 6 (6.12 recommended,
+> The QML workbench prototype additionally needs Qt 6.12.0 (
 > the MSVC 2022 64-bit kit) and a WinShun source checkout next to it (the
 > CMake variable `WINSHUN_DIR`, default `../WinShun`). The prototype previews
 > without the host: `binarylab.exe --bits --app-dir <Win顺 install folder>
@@ -77,7 +113,7 @@ Python 3.10+ for packaging and the integration tests.
 cmake -S . -B build -A x64                 # MSVC
 cmake --build build --config Release       # writes binarylab.exe next to plugin.json
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-qml-<version>.wsplugin
 ```
 
 To run a local build inside Win顺 without packaging, and for tests and the
@@ -428,8 +464,7 @@ here. No user data is uploaded or sent anywhere: there are no network calls.
 
 - Windows, WinShun with the C++ resident-plugin protocol (JSON-RPC 2.0, one
   UTF-8 message per line on stdio).
-- A C++17 compiler. MSVC (static CRT, `/utf-8`) or MinGW-w64 (static
-  `-static` link) both work. No Qt, no runtime DLL. The only third-party code
+- MSVC x64 Release: static CRT launcher and a Qt-linked application DLL. MinGW is not supported by the shared host runtime. QML uses host Qt and packages BinaryLabApp.dll. The only third-party code
   is the vendored [toml++](https://github.com/marzer/tomlplusplus) v3.4.0
   (MIT, single header `third_party/tomlplusplus/toml.hpp`, compiled with
   `TOML_EXCEPTIONS=0` and included as a SYSTEM include), used to parse the
@@ -441,23 +476,14 @@ here. No user data is uploaded or sent anywhere: there are no network calls.
 
 ## Verification
 
-See [TESTPLAN.md](TESTPLAN.md) for the full matrix and the measured results.
-Summary: **378/378** pure-logic assertions pass (including GCC `#pragma pack`
-`sizeof` / `alignof` / `offsetof` oracles and the record-format / TOML
-loading cases), and the workbench bits and bytes pages are driven end to end
-by [workbench_drive.py](tools/verify/workbench_drive.py) over JSON-RPC,
-asserting layout, clicks, drag selection, shortcuts and clipboard contents
-(`ALL CHECKS PASSED`).
-
-What has **not** been verified: the actual WinShun GUI message log and hover
-panel, monospace alignment of `preview.text`, keyboard feel, and importing a packaged `.wsplugin` into a fresh profile.
+See [edition validation](docs/variant-validation.en.md) for this build, packaging, host and icon verification.
+The QML bytes / struct / settings window pages remain unfinished; historical GDI workbench tests do not establish QML feature support.
 
 ## Failure handling
 
 Parse errors, out-of-range literals, unsupported ABI constructs and size-cap
 violations return a single non-actionable row with a stable error code and a
-corrected example; no partial or invented result is returned. Missing
-dependencies do not exist (there are none), and there is no network to fail.
+corrected example; no partial or invented result is returned. QML requires compatible host Qt and the packaged BinaryLabApp.dll. The host rejects incompatible Qt; a missing DLL produces a startup error. There are no network requests.
 All diagnostics go to stderr (`plugins.log`); stdout carries only JSON-RPC
 lines. `timeoutMs` is 1500; the slowest measured query at the 4096-byte cap
 was ~81 ms p95.
@@ -470,7 +496,7 @@ official whitelist, and `CONTRIBUTING.md` excludes exe/DLL submissions, so
 this plugin is distributed from its **own repository as a `.wsplugin` package**
 that users import into WinShun (see [Install](#install)). Do not open a source
 PR against `WinShun-plugins`. `tools/package.py` builds the package from the
-git-tracked files plus the built `binarylab.exe`, so the `build/` tree, logs and
+git-tracked files plus required `binarylab.exe` and `BinaryLabApp.dll`, so the `build/` tree, logs and
 anything untracked never ship. Bump `version` for every release; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 

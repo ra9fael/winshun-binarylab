@@ -56,7 +56,7 @@ QQmlEngine* ensureEngine()
     // The title bar's icon slot is drawn empty until the frame has one; this
     // is static and set once, before any title bar exists. The png travels
     // inside BinaryLabApp.dll's qrc (CMakeLists.txt).
-    ws::WindowFrame::setIcon(u"qrc:/qt/qml/WinShun/labicon.png"_s);
+    ws::WindowFrame::setIcon(u"qrc:/plugin-icons/app-32.png"_s);
     return g_engine;
 }
 
@@ -93,6 +93,7 @@ bool guiOpen(const EditorSpec& spec, std::string& error)
         delete object;
         return false;
     }
+    window->setIcon(QGuiApplication::windowIcon());
     g_frame->setWindow(window);
     // The DWM frame and the Mica backdrop, as capture's prepareWindow gives
     // them to every frameless WinShun QML window: an alpha-buffered swapchain

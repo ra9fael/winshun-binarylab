@@ -24,7 +24,7 @@ Window {
     minimumWidth: 640
     minimumHeight: 320
     color: Theme.backdrop && SystemTheme.materials && window.active ? "transparent" : Theme.page
-    title: "Binary Lab · " + tabLabels[lab.tab]
+    title: "Binary Lab · QML Preview · " + tabLabels[lab.tab]
     flags: Qt.Window | Qt.FramelessWindowHint // the title bar is ours (see WindowFrame)
 
     // The Win32 workbench re-fits the window per mode; keep the loaded page's

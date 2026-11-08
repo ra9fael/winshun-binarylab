@@ -11,3 +11,5 @@
 
 To update, download the header and LICENSE from the new tag, then update the
 version and hash above.
+
+The QML edition compiles WinShun controls and Phosphor fonts from the commit pinned in `release.json`. Their MIT notices ship as `WinShun-LICENSE` and `Phosphor-LICENSE`. Qt itself is supplied by the host.

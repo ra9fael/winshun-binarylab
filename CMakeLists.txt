@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 project(binarylab LANGUAGES CXX)
 
+set(BINARYLAB_OUTPUT_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH "Plugin runtime output folder")
+file(READ "${CMAKE_SOURCE_DIR}/plugin.json" binarylab_manifest)
+string(JSON BINARYLAB_VERSION GET "${binarylab_manifest}" version)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -15,17 +19,17 @@ set(CMAKE_AUTOMOC ON) # BinaryLabApp's Q_OBJECT types (the stub keeps none)
 # bits page on the GUI thread. plugin.json keeps naming binarylab.exe.
 set(WINSHUN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../WinShun" CACHE PATH
     "The WinShun checkout the shared QML controls and their C++ come from")
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickShapes)
+find_package(Qt6 6.12.0 EXACT REQUIRED COMPONENTS Core Gui Qml Quick QuickShapes)
 # The QML module's resources under :/qt/qml/<URI>, as WinShun's own app does;
 # without it they land at :/<URI>, where the engine never looks.
 qt_policy(SET QTP0001 NEW)
 
-add_executable(binarylab qmlapp/stub/main.cpp)
+add_executable(binarylab qmlapp/stub/main.cpp binarylab.rc)
 target_compile_definitions(binarylab PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 # Beside BinaryLabApp.dll, where plugin.json's runtime.program points.
-set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
+set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BINARYLAB_OUTPUT_DIR}")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-    set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}")
+    set_target_properties(binarylab PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${BINARYLAB_OUTPUT_DIR}")
 endforeach()
 if(MSVC)
     target_compile_options(binarylab PRIVATE /utf-8 /W4 /permissive-)
@@ -105,7 +109,7 @@ endforeach()
 
 # The workbench's title-bar icon, embedded with the QML it frames
 # (EditorQml.cpp: ws::WindowFrame::setIcon("qrc:/qt/qml/WinShun/labicon.png")).
-set_source_files_properties(qmlapp/assets/labicon.png PROPERTIES QT_RESOURCE_ALIAS "labicon.png")
+set_source_files_properties(icons/app-32.png PROPERTIES QT_RESOURCE_ALIAS "app-32.png")
 
 set(qml_import_scan "")
 if(QT6_IS_SHARED_LIBS_BUILD)
@@ -119,7 +123,7 @@ qt_add_qml_module(BinaryLabApp
     ${qml_import_scan}
     NO_GENERATE_EXTRA_QMLDIRS
     QML_FILES ${binarylab_qml}
-    RESOURCES ${theme_images} qmlapp/assets/labicon.png
+    RESOURCES ${theme_images} icons/app-32.png
     SOURCES "${app_dir}/HotkeyRule.h"
 )
 # Bytecode only, no QML compiled to C++: the plugin runs on whichever Qt 6 its
@@ -136,9 +140,9 @@ qt_add_resources(BinaryLabApp "binarylab_phosphor"
 target_link_libraries(BinaryLabApp PRIVATE
     Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickShapes
     user32 gdi32 dwmapi advapi32 ole32 shell32 shlwapi uxtheme comctl32 imm32 shcore)
-set_target_properties(BinaryLabApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
+set_target_properties(BinaryLabApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BINARYLAB_OUTPUT_DIR}")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-    set_target_properties(BinaryLabApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}")
+    set_target_properties(BinaryLabApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${BINARYLAB_OUTPUT_DIR}")
 endforeach()
 
 if(MSVC)
@@ -177,3 +181,17 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(binarylab_expr_spec PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests")
 endforeach()
 add_test(NAME binarylab_expr_spec COMMAND binarylab_expr_spec)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME binarylab_package COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_package.py")
+
+qt_add_resources(BinaryLabApp "binarylab_icons" PREFIX "/plugin-icons" BASE "${CMAKE_SOURCE_DIR}/icons" FILES
+    icons/app-16.png
+    icons/app-20.png
+    icons/app-24.png
+    icons/app-32.png
+    icons/app-40.png
+    icons/app-48.png
+    icons/app-64.png
+    icons/app-256.png
+)
