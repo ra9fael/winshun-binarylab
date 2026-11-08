@@ -32,7 +32,16 @@ Window {
     // height is the Loader's (not constrained), so measure its implicitHeight.
     readonly property real contentHeight: loader.item && loader.item.implicitHeight > 0
         ? loader.item.implicitHeight : 0
-    onContentHeightChanged: Qt.callLater(window.fitHeight)
+    // The fit goes through a short debounce: every type/width click changes
+    // the content height, and refitting immediately on each one rebuilt the
+    // D3D swapchain faster than the RHI reclaimed the old buffers — the
+    // sandbox's commit ceiling then OOM'd the renderer mid-session.
+    onContentHeightChanged: fitDelay.restart()
+    Timer {
+        id: fitDelay
+        interval: 150
+        onTriggered: window.fitHeight()
+    }
     function fitHeight() {
         const content = loader.item
         if (!content || content.implicitHeight <= 0)

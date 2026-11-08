@@ -15,9 +15,9 @@
     "qt": "host",
     "qtVersion": "6.12",
     "sandbox": "strict",
+    "memoryMB": 512,
     "start": "eager",
     "timeoutMs": 1500,
-    "memoryMB": 128,
     "idleExitSec": 0,
     "encoding": "utf-8"
   },
