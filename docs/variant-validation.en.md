@@ -37,4 +37,4 @@ Both tagged GitHub workflows passed. GDI `gdi-v0.3.2` is stable and latest; QML 
 
 Downloaded the public assets and matched their SHA256 files and GitHub asset digests. Verified manifest IDs / versions, runtime DLL lists, EXE file versions, the named icon group and all eight frames. Re-ran production installation in both directions and **48 window checks** using those downloaded binaries. See [packages and source commits](published-packages.json), [installation](published-install.txt), [window checks](published-window-checks.json).
 
-No release assets were replaced. Temporary deployment copies and build outputs were removed after retaining the packages and evidence. The original working copies and pre-existing binaries were preserved.
+No release assets were replaced. Packages and evidence are retained. Automatic approval rejected task build / deployment cleanup with "blocked by policy", so those copies remain under build / dist. The installer probe cleaned up its own temporary profiles. Original working copies and pre-existing binaries were preserved.
