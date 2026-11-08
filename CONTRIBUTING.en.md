@@ -22,10 +22,10 @@ Isolated output avoids overwriting running EXE / DLL files. Do not stop user pro
 
 1. Update `plugin.json.version` and `binarylab.rc`. `release.json` declares the edition, preview status and QML build dependencies. Keep numeric versions.
 2. Update bilingual README, CHANGELOG, relevant screenshots and validation evidence. Check fresh installs, replacement in both directions, data preservation, queries and window icons. Document incomplete QML pages.
-3. Build a clean commit, run relevant CTest and actual host checks. Push the branch and wait for CI success.
+3. Build a clean commit, run relevant CTest and actual host checks. Push the branch, then dispatch `release.yml` with its `ref` and `publish=false`; wait for that verification to pass. Branch pushes and PRs do not trigger workflows.
 4. Push `<variant>-vX.Y.Z` on that branch. CI validates the identity, builds, tests and publishes the package plus checksum. QML previews never become latest.
 5. Verify GitHub assets and checksums serially. Never overwrite published assets; bump the patch for fixes.
 
 Both IDs must stay `ra9fael.binarylab`. GDI packages no DLLs; QML packaging fails without `BinaryLabApp.dll`. Keep history JSONL compatible; back up before a breaking migration. Development directory links cannot be replaced by an archive; use isolated profiles for verification.
 
-Use `type(scope): subject` commits. Commit only task changes, never build / dist output, local paths or credentials. Update the host SDK `winshun.h` separately.
+Use English Angular `type(scope): subject` commit subjects and bodies. Commit only task changes, never build / dist output, local paths or credentials. Update the host SDK `winshun.h` separately.
