@@ -28,5 +28,13 @@ Two branches, edition-specific tags, package filenames and display names; one sh
 
 - Four QML launches requested QT_SCALE_FACTOR values, but native icon checks ran at the actual 96-DPI desktop. This does not establish native DPI transition coverage. Real cross-monitor dragging, taskbar and Alt+Tab visual checks were not automated.
 - No repeated GUI installation confirmation or shortcut restoration clicks. Production installer functions test directory replacement; independent file fixtures test retention. Full running-plugin replacement through the GUI is untested; locked-file refusal is measured and stop-before-replacement is based on host source inspection.
-- QML bytes / struct / settings pages remain unfinished. Not every calculation edge, Windows version or hardware path was rerun.
-- Append cloud build / release outcomes after completion; local checks are not cloud CI.
+- QML bytes / struct / settings / help pages remain unfinished. Not every calculation edge, Windows version or hardware path was rerun.
+
+
+## Published artifacts verified
+
+Both tagged GitHub workflows passed. GDI `gdi-v0.3.2` is stable and latest; QML `qml-v0.4.0` is a prerelease. The default branch is `gdi`. The initial QML CI failed because aqt 3.3.0 used the old Qt feed layout; pinning the upstream installer commit with Windows compiler-specific feeds resolved it.
+
+Downloaded the public assets and matched their SHA256 files and GitHub asset digests. Verified manifest IDs / versions, runtime DLL lists, EXE file versions, the named icon group and all eight frames. Re-ran production installation in both directions and **48 window checks** using those downloaded binaries. See [packages and source commits](published-packages.json), [installation](published-install.txt), [window checks](published-window-checks.json).
+
+No release assets were replaced. Temporary deployment copies and build outputs were removed after retaining the packages and evidence. The original working copies and pre-existing binaries were preserved.

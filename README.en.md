@@ -15,6 +15,8 @@ bits page lets you click bits, drag-paint, and copy the edited value in any
 base; the bytes page lets you select bytes, switch endianness, or walk decoded
 records field by field.
 
+**QML preview scope:** the bits window is implemented; bytes / struct queries work, while their window pages, settings and help remain placeholders.
+
 ![Binary Lab QML Preview](docs/qml-window.png)
 
 ## GDI / QML editions
@@ -27,7 +29,7 @@ This branch is **QML 0.4.0 Preview**.
 | Tag | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
 | Package | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
 | Runtime | Native Win32 / GDI, no Qt dependency | Host Qt 6.12, minimum patch 6.12.0; WinShun ≥ 0.22.0 |
-| Status | Stable | Preview; bits window works, bytes / struct / settings pages are still being ported |
+| Status | Stable | Preview; bits window works, bytes / struct / settings / help pages are still being ported |
 
 Both editions use `ra9fael.binarylab`, so **only one is installed per WinShun profile**.
 Import the other `.wsplugin` and confirm replacement, including same-version reinstalls and downgrades.

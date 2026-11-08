@@ -8,8 +8,8 @@
 给嵌入式开发用的 Win顺 常驻插件：解析 `hex` / `bin` / `oct` 字符串、可视化位运算、
 计算 C 风格结构体布局、按 hextract TOML 格式解码记录。所有计算都是有界、纯内存的
 操作。结果行和 `preview.text` 由宿主渲染；可选的**交互式工作台**只在被触发时打开
-自己的窗口：位页可点击置位、拖拽刷位，以任意进制复制修改后的值；字节流页可拖选
-字节、切换端序，或按记录格式逐字段查看解码结果。
+自己的窗口。本 QML 预览版实现位页的位编辑、进制读数、浮点拆解与历史记录；
+字节流、结构体、设置和帮助窗口页仍在移植，bytes / struct 的宿主查询可用。
 
 ![Binary Lab QML Preview](docs/qml-window.png)
 
@@ -23,7 +23,7 @@
 | 标签 | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
 | 安装包 | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
 | 运行时 | 原生 Win32 / GDI，无 Qt 依赖 | Win顺提供 Qt 6.12，最低补丁 6.12.0；Win顺 ≥ 0.22.0 |
-| 状态 | 稳定版 | 预览版；bits 窗口可用，bytes / struct / 设置窗口页仍在移植 |
+| 状态 | 稳定版 | 预览版；bits 窗口可用，bytes / struct / 设置 / 帮助窗口页仍在移植 |
 
 两版的插件 ID 都是 `ra9fael.binarylab`，**同一个 Win顺配置内互斥安装**。
 导入另一版的 `.wsplugin`，确认替换即可；同版本覆盖和降级也走此确认。
