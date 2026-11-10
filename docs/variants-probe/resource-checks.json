@@ -1,0 +1,36 @@
+[
+  {
+    "variant": "gdi",
+    "named_group": [
+      "IDI_ICON1"
+    ],
+    "sizes": [
+      16,
+      20,
+      24,
+      32,
+      40,
+      48,
+      64,
+      256
+    ],
+    "passed": true
+  },
+  {
+    "variant": "qml",
+    "named_group": [
+      "IDI_ICON1"
+    ],
+    "sizes": [
+      16,
+      20,
+      24,
+      32,
+      40,
+      48,
+      64,
+      256
+    ],
+    "passed": true
+  }
+]

@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.21)
+project(binarylab_install_probe LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Sql)
+set(HOST D:/dev/github/winshun-dev/WinShun)
+add_executable(install_probe main.cpp)
+target_compile_options(install_probe PRIVATE /utf-8)
+target_compile_definitions(install_probe PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_include_directories(install_probe PRIVATE "${HOST}/src/plugin")
+target_link_libraries(install_probe PRIVATE
+    "${HOST}/build/debug/src/plugin/wsplugin.lib"
+    "${HOST}/build/debug/src/core/wscore.lib"
+    "${HOST}/build/debug/src/extract/miniz.lib"
+    "${HOST}/build/debug/src/mcp/wsmcp.lib"
+    "${HOST}/build/debug/src/mcp/wsmcp_proto.lib"
+    Qt6::Core Qt6::Gui Qt6::Network Qt6::Sql advapi32 bcrypt userenv user32 shlwapi shell32 ole32 version)
