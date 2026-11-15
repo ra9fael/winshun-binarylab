@@ -2,6 +2,11 @@
 
 [简体中文](variants-design.md)
 
+> **Status (2026-11-15):** QML is the only maintained edition; GDI ends at 0.3.3 and
+> the `gdi` branch is archived. This document keeps the original variant design and
+> migration rationale as history. Current release rules are in README and
+> CONTRIBUTING: tag `qml-vX.Y.Z`, package `<id>-<version>.wsplugin`, published as Latest.
+
 ## Verdict
 
 One repository, long-lived `gdi` / `qml` branches and the shared ID `ra9fael.binarylab`. Installing either edition replaces the other. Names, tags and filenames identify the edition. Approved by the user on 2026-11-09.
@@ -14,7 +19,7 @@ Source inspection: `PluginSettings::installFrom` asks by ID, `updates::replace` 
 
 GDI is a static-CRT executable. QML uses a static-CRT launcher, `BinaryLabApp.dll` and host Qt 6.12.0 (same major/minor, minimum patch). Pin the WinShun controls source commit. Keep the calculation core pure C++; port shared fixes as separate commits.
 
-`release.json` declares variant, prerelease and QML build dependencies. `plugin.json` owns the version and runtime contract. Tags: `gdi-vX.Y.Z` / `qml-vX.Y.Z`; packages: `<id>-<variant>-<version>.wsplugin`.
+`release.json` declares variant, prerelease and QML build dependencies. `plugin.json` owns the version and runtime contract. Only QML is published now: tag `qml-vX.Y.Z`, package `<id>-<version>.wsplugin` (the variant segment is gone since 0.5.0).
 
 ## Interaction and icons
 

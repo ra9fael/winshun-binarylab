@@ -10,61 +10,58 @@ A WinShun resident plugin for embedded work: parse `hex` / `bin` / `oct` strings
 visualize bit operations, compute C-like struct layout, and decode records from
 hextract TOML formats. Everything is a bounded, pure in-memory computation. The
 result rows and `preview.text` are rendered by the host, and the optional
-**interactive workbench** opens its own window (only when you trigger it): the
-bits page lets you click bits, drag-paint, and copy the edited value in any
-base; the bytes page lets you select bytes, switch endianness, or walk decoded
-records field by field.
+**interactive workbench** opens its own window (only when you trigger it).
 
-**QML preview scope:** the bits window is implemented; bytes / struct queries work, while their window pages, settings and help remain placeholders.
+![Binary Lab](docs/qml-window.png)
 
-![Binary Lab QML Preview](docs/qml-window.png)
+## Demonstration
 
-## GDI / QML editions
+![Bit workbench](https://github.com/user-attachments/assets/80947b0e-5759-4ec0-92a7-6c4ebc6beaff)
 
-This branch is **QML 0.4.0 Preview**.
+![Byte stream and struct layout](https://github.com/user-attachments/assets/0f6eab17-13c1-469d-a934-56ca43a09a92)
 
-| Item | GDI | QML |
-|---|---|---|
-| Branch | `gdi` (default) | `qml` |
-| Tag | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
-| Package | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
-| Runtime | Native Win32 / GDI, no Qt dependency | Host Qt 6.12, minimum patch 6.12.0; WinShun ≥ 0.22.0 |
-| Status | Stable | Preview; bits window works, bytes / struct / settings / help pages are still being ported |
+## Maintained edition
 
-Both editions use `ra9fael.binarylab`, so **only one is installed per WinShun profile**.
-Import the other `.wsplugin` and confirm replacement, including same-version reinstalls and downgrades.
-The host stops the old process and replaces its whole installation directory. Settings,
-shortcuts and the separate data directory survive. Both read the same `history.jsonl` format.
-Switching back to GDI removes the QML DLL from the installation directory.
-Development directory links cannot be replaced by an archive; use an isolated test profile.
+The QML edition has been the only maintained and published edition since 0.5.0;
+the native GDI edition ends at 0.3.3 and receives no further updates.
 
-Choose GDI or QML from [Releases](https://github.com/ra9fael/winshun-binarylab/releases).
-QML releases are marked Pre-release. Each edition increments its own numeric version
-and ships a SHA256 sidecar. Updates are selected manually; no update feed switches editions.
+| Item | Value |
+|---|---|
+| Branch | `qml` (the only maintained one) |
+| Tag | `qml-vX.Y.Z` |
+| Package | `ra9fael.binarylab-<version>.wsplugin` |
+| Runtime | Host Qt 6.12 (minimum patch 6.12.0); WinShun ≥ 0.22.0 |
+| Release | Repository Latest, no longer Pre-release |
+
+Both lines shared the plugin ID `ra9fael.binarylab`, so 0.5.0 replaces GDI 0.3.3
+in place instead of installing beside it. Settings, shortcuts and the separate
+data directory survive; history keeps the same `history.jsonl` format. A SHA256
+sidecar ships with each package. The plugin-library entry points here, so library
+updates no longer switch back to GDI.
 
 Both editions share the Phosphor binary icon for plugin lists, the executable, windows
 and custom captions. ICO sizes: 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256; QML embeds matching PNGs.
 
 ## Install
 
-1. Choose **QML** from [Releases](https://github.com/ra9fael/winshun-binarylab/releases) and download `ra9fael.binarylab-qml-<version>.wsplugin`. QML releases carry the Pre-release label.
+1. Download `ra9fael.binarylab-0.5.0.wsplugin` from [Releases](https://github.com/ra9fael/winshun-binarylab/releases).
 2. Optionally compare `Get-FileHash <file> -Algorithm SHA256` with the accompanying `.sha256` file.
 3. Import through **Settings → Plugins → Installed → Add plugin → Archive (.zip / .wsplugin)**. After a fresh install, enable the plugin and confirm its permissions.
 
-**Update or change edition:** import the selected package and confirm replacement, including same-version reinstalls or downgrades. Settings and the separate data directory retain the same ID.
+**Upgrading from GDI:** import 0.5.0 and confirm the replacement; same-version
+reinstalls and downgrades ask the same way. Settings and the data directory stay.
+**Updates:** the plugin-library entry now points at this QML package, so updates
+from **Settings → Plugins** stay on QML; the release page also works.
 **Uninstall:** remove the plugin from **Settings → Plugins → Installed**.
 
-This release is distributed from its own GitHub repository. No two-edition gallery index or automatic update feed is configured. QML packages `binarylab.exe` and `BinaryLabApp.dll`, using host Qt 6.12 (minimum patch 6.12.0) without bundling Qt itself.
+The QML package contains `binarylab.exe` and `BinaryLabApp.dll`, uses host Qt 6.12
+(minimum patch 6.12.0) and does not bundle the Qt runtime.
 
 ## Build from source
 
 Use MSVC x64 Release and Qt 6.12.0. Check out the WinShun commit in `release.json`,
 then set `-DWINSHUN_DIR=<checkout> -DCMAKE_PREFIX_PATH=<Qt kit>`.
 Set `-DBINARYLAB_OUTPUT_DIR=<isolated folder>` and pass the same `--build-dir` to packaging.
-
-The detailed workbench descriptions below retain the GDI behavior specification.
-Only the bits window is implemented in this QML preview. Shared bytes / struct queries work;
-their window pages and the settings page are still placeholders.
 
 Requirements: Windows 10/11 x64, CMake 3.21+ and Visual Studio 2022 or later
 (MSVC x64). The QML workbench on the `qml` branch links Win顺's Qt dynamically
@@ -81,7 +78,7 @@ Python 3.10+ for packaging and the integration tests.
 cmake -S . -B build -A x64                 # MSVC
 cmake --build build --config Release       # writes binarylab.exe next to plugin.json
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-qml-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
 ```
 
 To run a local build inside Win顺 without packaging, and for tests and the
@@ -444,8 +441,7 @@ here. No user data is uploaded or sent anywhere: there are no network calls.
 
 ## Verification
 
-See [edition validation](docs/variant-validation.en.md) for this build, packaging, host and icon verification.
-The QML bytes / struct / settings window pages remain unfinished; historical GDI workbench tests do not establish QML feature support.
+See [edition validation](docs/variant-validation.en.md) for the 0.5.0 build, packaging, host and icon verification.
 
 ## Failure handling
 
@@ -458,7 +454,7 @@ was ~81 ms p95.
 
 ## Distribution and versioning
 
-Release tags use `<variant>-vX.Y.Z`; `plugin.json` keeps a numeric version. The packager reads `release.json`, validates the edition, required runtime files and bilingual notes, then emits the `.wsplugin`, SHA256 and release notes. QML remains a preview. Changing editions is an explicit replacement install. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Release tags use `qml-vX.Y.Z`; `plugin.json` keeps a numeric version. The packager reads `release.json`, validates the version, required runtime files and bilingual notes, then emits `<id>-<version>.wsplugin`, SHA256 and release notes. QML is the only maintained edition and publishes as Latest; an update is always a replacement install the user confirms. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

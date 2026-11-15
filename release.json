@@ -1,6 +1,6 @@
 {
   "variant": "qml",
-  "prerelease": true,
+  "prerelease": false,
   "qtVersion": "6.12.0",
   "hostSource": {
     "repository": "ra9fael/WinShun",

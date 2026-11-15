@@ -62,17 +62,19 @@ def package(root: Path, build: Path, out: Path, tag: str | None = None) -> Path:
     data = buffer.getvalue()
     if len(data) > MAX_BYTES:
         raise ValueError('Archive exceeds 256 MiB')
-    filename = f"{manifest['id']}-{variant}-{version}.wsplugin"
+    filename = f"{manifest['id']}-{version}.wsplugin"
     digest = hashlib.sha256(data).hexdigest()
     out.mkdir(parents=True, exist_ok=True)
     target = out / filename
     target.write_bytes(data)
     (out / (filename + '.sha256')).write_text(f'{digest}  {filename}\n', encoding='ascii')
-    title = f'Binary Lab {variant.upper()} {version}'
-    if release['prerelease']:
-        title += ' — Preview / 预览版'
+    title = f'Binary Lab {version}'
     (out / 'release-notes.md').write_text(
-        f'# {title}\n\n{notes}\n\nSHA256: `{digest}`  `{filename}`\n', encoding='utf-8')
+        f'# {title}\n\n'
+        'QML 是唯一维护的版本；安装会替换旧版（含 GDI 0.3.3），设置和历史保留。\n'
+        'QML is the only maintained edition. Installing this replaces the previous copy '
+        '(including GDI 0.3.3); settings and history are kept.\n\n'
+        f'{notes}\n\nSHA256: `{digest}`  `{filename}`\n', encoding='utf-8')
     print(f'{filename}: {len(files)} files, {len(data)} bytes, SHA256 {digest}')
     return target
 

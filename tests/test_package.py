@@ -51,7 +51,7 @@ class PackageTests(unittest.TestCase):
         (self.root / 'stray.dll').write_bytes(b'MZstale')
         self.save()
         target = package(self.root, self.build, self.out, 'gdi-v1.2.3')
-        self.assertEqual(target.name, 'ra9fael.binarylab-gdi-1.2.3.wsplugin')
+        self.assertEqual(target.name, 'ra9fael.binarylab-1.2.3.wsplugin')
         with zipfile.ZipFile(target) as archive:
             self.assertIn('binarylab.exe', archive.namelist())
             self.assertFalse(any(n.lower().endswith('.dll') for n in archive.namelist()))
@@ -63,14 +63,14 @@ class PackageTests(unittest.TestCase):
             package(self.root, self.build, self.out, 'qml-v1.2.3')
         self.assertFalse(self.out.exists())
 
-    def test_qml_contains_dll_icons_and_preview_notes(self):
+    def test_qml_contains_dll_icons_and_release_notes(self):
         self.qml()
         (self.build / 'BinaryLabApp.dll').write_bytes(b'MZfixture dll')
         target = package(self.root, self.build, self.out, 'qml-v1.2.3')
         with zipfile.ZipFile(target) as archive:
             self.assertIn('BinaryLabApp.dll', archive.namelist())
             self.assertIn('icons/app-256.png', archive.namelist())
-        self.assertIn('Preview', (self.out / 'release-notes.md').read_text(encoding='utf-8'))
+        self.assertIn('only maintained edition', (self.out / 'release-notes.md').read_text(encoding='utf-8'))
 
     def test_rejects_other_variant_and_legacy_tags(self):
         for tag in ('qml-v1.2.3', 'v1.2.3', 'gdi-v1.2.4'):

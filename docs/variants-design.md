@@ -2,6 +2,10 @@
 
 [English](variants-design.en.md)
 
+> **状态（2026-11-15）**：QML 已成为唯一维护版本；GDI 停在 0.3.3，`gdi` 分支归档。
+> 本文保留当时的分支方案与迁移依据，作为历史记录。当前发布规则以 README 和
+> CONTRIBUTING 为准：标签 `qml-vX.Y.Z`，包名 `<id>-<version>.wsplugin`，发布为 Latest。
+
 ## 关键裁决
 
 一个仓库的 `gdi` / `qml` 两支使用同一插件 ID `ra9fael.binarylab`。安装另一版就是替换当前版；名称、标签和包名区分类型。用户于 2026-11-09 批准此方案。
@@ -14,11 +18,11 @@
 
 GDI 使用静态 CRT 的单 EXE；QML 使用静态 CRT 启动器、`BinaryLabApp.dll` 和宿主 Qt 6.12.0（同主次版本、最低该补丁）。构建固定 WinShun 控件源码提交。计算核心保持纯 C++，公共修复独立提交后同步到另一支。
 
-`release.json` 声明 variant、prerelease 和 QML 构建依赖；`plugin.json` 是版本和运行声明的权威。GDI 标签 `gdi-vX.Y.Z`，QML 标签 `qml-vX.Y.Z`。安装包 `<id>-<variant>-<version>.wsplugin`。
+`release.json` 声明 variant、prerelease 和 QML 构建依赖；`plugin.json` 是版本和运行声明的权威。当前只发布 QML：标签 `qml-vX.Y.Z`，安装包 `<id>-<version>.wsplugin`（0.5.0 起去掉类型段）。
 
 ## 交互与图标
 
-名称明确标注 GDI / QML，QML 窗口注明 Preview。同源图标用于 manifest、EXE、窗口和标题栏；ICO 八尺寸，Qt 嵌入对应 PNG。命令 ID、关键字和动作 ID 保持不变。
+名称明确标注 GDI / QML，QML 窗口注明 Preview。同源图标用于 manifest、EXE、窗口和标题栏；ICO 八尺寸，Qt 嵌入对应 PNG。命令 ID、关键字和动作 ID 保持不变。（0.5.0 起名称不再标注版本类型，窗口也不再注明 Preview。）
 
 ## 权限与数据
 

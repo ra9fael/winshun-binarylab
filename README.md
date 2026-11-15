@@ -8,55 +8,52 @@
 给嵌入式开发用的 Win顺 常驻插件：解析 `hex` / `bin` / `oct` 字符串、可视化位运算、
 计算 C 风格结构体布局、按 hextract TOML 格式解码记录。所有计算都是有界、纯内存的
 操作。结果行和 `preview.text` 由宿主渲染；可选的**交互式工作台**只在被触发时打开
-自己的窗口。本 QML 预览版实现位页的位编辑、进制读数、浮点拆解与历史记录；
-字节流、结构体、设置和帮助窗口页仍在移植，bytes / struct 的宿主查询可用。
+自己的窗口。
 
-![Binary Lab QML Preview](docs/qml-window.png)
+![Binary Lab](docs/qml-window.png)
 
-## GDI / QML 双版本
+## 演示
 
-本分支为 **QML 0.4.0 预览版**。
+![位运算工作台](https://github.com/user-attachments/assets/80947b0e-5759-4ec0-92a7-6c4ebc6beaff)
 
-| 项目 | GDI | QML |
-|---|---|---|
-| 分支 | `gdi`（默认） | `qml` |
-| 标签 | `gdi-vX.Y.Z` | `qml-vX.Y.Z` |
-| 安装包 | `ra9fael.binarylab-gdi-X.Y.Z.wsplugin` | `ra9fael.binarylab-qml-X.Y.Z.wsplugin` |
-| 运行时 | 原生 Win32 / GDI，无 Qt 依赖 | Win顺提供 Qt 6.12，最低补丁 6.12.0；Win顺 ≥ 0.22.0 |
-| 状态 | 稳定版 | 预览版；bits 窗口可用，bytes / struct / 设置 / 帮助窗口页仍在移植 |
+![字节流与结构体](https://github.com/user-attachments/assets/0f6eab17-13c1-469d-a934-56ca43a09a92)
 
-两版的插件 ID 都是 `ra9fael.binarylab`，**同一个 Win顺配置内互斥安装**。
-导入另一版的 `.wsplugin`，确认替换即可；同版本覆盖和降级也走此确认。
-宿主先停止旧进程，再整体替换安装目录；设置、快捷键和独立数据目录保留。
-历史使用同一个 `history.jsonl` 格式。切回 GDI 后不会把 QML DLL 留在安装目录。
-开发目录链接不能直接被安装包替换，请使用独立测试配置。
+## 维护版本
 
-从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 按 GDI / QML 名称选择包，
-QML 的 Release 标记为 Pre-release。版本号各自递增；安装包旁边提供 SHA256。
-当前手动选择版本更新；尚未接入会跨版本类型切换的自动更新源。
+QML 版从 0.5.0 起是唯一维护和发布的版本；原生 GDI 版停在 0.3.3，不再更新。
+
+| 项目 | 说明 |
+|---|---|
+| 分支 | `qml`（唯一维护） |
+| 标签 | `qml-vX.Y.Z` |
+| 安装包 | `ra9fael.binarylab-<version>.wsplugin` |
+| 运行时 | Win顺 提供 Qt 6.12（最低补丁 6.12.0），需 Win顺 ≥ 0.22.0 |
+| 发布 | 仓库的 Latest release，不再标记 Pre-release |
+
+两版共用插件 ID `ra9fael.binarylab`，所以 0.5.0 会原地替换 GDI 0.3.3，而不是
+并存安装；设置、快捷键和独立数据目录保留，历史使用同一个 `history.jsonl` 格式。
+安装包旁提供 SHA256。插件库条目指向本版，更新不会再切回 GDI。
 
 图标来自同一套 Phosphor binary 图形，覆盖插件列表、EXE、窗口及自绘标题栏。
 ICO 含 16 / 20 / 24 / 32 / 40 / 48 / 64 / 256 像素；QML 使用同源 PNG 资源。
 
 ## 安装
 
-1. 从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 选择 **QML**，下载 `ra9fael.binarylab-qml-<version>.wsplugin`。QML 选带 Pre-release 标记的版本。
+1. 从 [Releases](https://github.com/ra9fael/winshun-binarylab/releases) 下载 `ra9fael.binarylab-0.5.0.wsplugin`。
 2. 可用旁边的 `.sha256` 文件与 `Get-FileHash <file> -Algorithm SHA256` 核对完整性。
 3. 在 **设置 → 插件 → 已安装 → 添加插件 → 压缩包（.zip / .wsplugin）** 中导入。全新安装后打开插件开关并确认权限。
 
-**更新或切换界面版本：** 导入目标包并确认替换；同版本覆盖与降级也允许确认。保留同 ID 的配置和独立数据目录。
+**从 GDI 升级：** 直接导入 0.5.0 并确认替换；同版本覆盖与降级也允许确认。设置和独立数据目录保留。
+**更新：** 插件库条目已指向 QML 版，可在 **设置 → 插件** 里更新，也可从发布页手动安装。
 **卸载：** 在 **设置 → 插件 → 已安装** 中移除。
 
-本次通过独立 GitHub Release 分发，尚未提交双版本插件库索引或配置自动更新源。QML 包含 `binarylab.exe` 与 `BinaryLabApp.dll`，使用宿主 Qt 6.12（最低补丁 6.12.0），不捆绑 Qt 运行时。
+QML 包包含 `binarylab.exe` 与 `BinaryLabApp.dll`，使用宿主 Qt 6.12（最低补丁 6.12.0），不捆绑 Qt 运行时。
 
 ## 从源码构建
 
 需要 MSVC x64 Release 和 Qt 6.12.0；按照 `release.json` 的固定提交取得 WinShun 源码，
 设置 `-DWINSHUN_DIR=<源码目录> -DCMAKE_PREFIX_PATH=<Qt kit>`。
 可设置 `-DBINARYLAB_OUTPUT_DIR=<独立目录>` 避免覆盖运行中的程序，打包时传入同目录的 `--build-dir`。
-
-以下工作台详细说明保留了 GDI 的行为规格；QML 当前仅 bits 页已实现，
-bytes / struct 查询仍由共享计算核心处理，相关窗口页和设置页不属于本预览版已实现功能。
 
 环境要求：Windows 10/11 x64、CMake 3.21+ 和 Visual Studio 2022 及以上（MSVC x64）。
 qml 分支的 QML 工作台动态链接 Win顺 的 Qt（共享 Qt 契约只支持 MSVC），MinGW 构建
@@ -70,7 +67,7 @@ qml 分支的 QML 工作台动态链接 Win顺 的 Qt（共享 Qt 契约只支�
 cmake -S . -B build -A x64                 # MSVC
 cmake --build build --config Release       # 在 plugin.json 旁边生成 binarylab.exe
 ctest --test-dir build -C Release --output-on-failure
-python tools/package.py                    # dist/ra9fael.binarylab-qml-<version>.wsplugin
+python tools/package.py                    # dist/ra9fael.binarylab-<version>.wsplugin
 ```
 
 本地构建如何直接在 Win顺 里运行，以及测试和发版流程，见
@@ -343,8 +340,7 @@ LSB / MSB 按钮重写表达式里的字节序词。滚轮翻记录，Shift+滚�
 
 ## 验证
 
-本轮两版构建、打包、宿主运行与图标检查见 [双版本验证](docs/variant-validation.md)。
-QML 的 bytes / struct / 设置窗口页未完成；GDI 旧版工作台验证不能代表 QML 已支持这些页面。
+0.5.0 的构建、打包、宿主运行与图标检查记录见 [版本验证](docs/variant-validation.md)。
 
 ## 失败处理
 
@@ -355,7 +351,7 @@ stdout 只承载 JSON-RPC 行。`timeoutMs` 为 1500；在 4096 字节上限下�
 
 ## 分发与版本
 
-发布使用 `<variant>-vX.Y.Z` 标签；`plugin.json` 保持纯数字版本。打包脚本读取 `release.json`，校验类型、必需运行文件和双语版本说明，然后生成 `.wsplugin`、SHA256 与发布说明。QML 作为预览版发布；切换类型始终是用户明确选择的替换安装。流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+发布使用 `qml-vX.Y.Z` 标签；`plugin.json` 保持纯数字版本。打包脚本读取 `release.json`，校验版本、必需运行文件和双语版本说明，然后生成 `<id>-<version>.wsplugin`、SHA256 与发布说明。QML 版是唯一维护版本，发布为 Latest；更新始终是用户确认的替换安装。流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 

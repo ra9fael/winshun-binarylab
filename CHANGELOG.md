@@ -10,6 +10,18 @@ future phases live in [ROADMAP.md](ROADMAP.md).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-15
+
+### 变更
+- QML 成为唯一维护版本；GDI 分支停在 0.3.3 并归档，不再发布更新。
+- 安装包改名为 `ra9fael.binarylab-<version>.wsplugin`（去掉 `-qml-`），插件库索引才接受；库条目改为指向本版，更新不会切回 GDI。
+- QML 发布不再标记 Pre-release，并作为仓库的 Latest release。
+- README、双语 CHANGELOG 和版本设计说明改为单版本描述，补充 GDI 升级与降级方式。
+
+### 说明
+- 插件 ID、设置、快捷键和历史文件格式不变；0.5.0 覆盖 GDI 0.3.3 是原地替换，数据保留。
+- 宿主低于 0.22.0 时 `minWinShun` 会阻止更新，继续使用 GDI 0.3.3，不会装到无法运行的新包。
+
 ## [0.4.0] - 2026-11-09
 
 ### 变更
